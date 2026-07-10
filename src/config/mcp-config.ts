@@ -231,6 +231,7 @@ export async function setConfiguredMcpServer(params: {
   server: unknown;
   createOnly?: boolean;
   recordIndependentOwner?: boolean;
+  expectedServer?: Record<string, unknown>;
 }): Promise<ConfigMcpWriteResult> {
   const name = params.name.trim();
   if (!name) {
@@ -249,6 +250,18 @@ export async function setConfiguredMcpServer(params: {
       ok: false,
       path: loaded.path,
       error: `MCP server ${JSON.stringify(name)} already exists.`,
+    };
+  }
+  if (
+    params.expectedServer &&
+    (!Object.hasOwn(loaded.mcpServers, name) ||
+      stableStringify(canonicalizeConfiguredMcpServer(loaded.mcpServers[name])) !==
+        stableStringify(canonicalizeConfiguredMcpServer(params.expectedServer)))
+  ) {
+    return {
+      ok: false,
+      path: loaded.path,
+      error: `MCP server ${JSON.stringify(name)} changed and was not updated.`,
     };
   }
 
