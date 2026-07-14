@@ -137,30 +137,25 @@ describe("applyClawAddPlan", () => {
     });
 
     await expect(applyClawAddPlan(plan)).rejects.toEqual(
-      expect.objectContaining<Partial<ClawAddMutationError>>({ code: "unsupported_components" }),
+      expect.objectContaining<Partial<ClawAddMutationError>>({ code: "plan_blocked" }),
     );
     await expect(access(plan.agent.workspace)).rejects.toThrow();
   });
 
-  it("reports a partial add when provenance persistence fails after config commit", async () => {
+  it("fails before mutation when the pending provenance record cannot be persisted", async () => {
     const { plan } = await makePlan();
     let config: OpenClawConfig = {};
 
-    const result = await applyClawAddPlan(plan, {
-      commitConfig: async (transform) => {
-        config = transform(config);
-      },
-      persistRecord: () => {
-        throw new Error("database unavailable");
-      },
-    });
-
-    expect(result).toMatchObject({
-      status: "partial",
-      workspaceCreated: true,
-      configCommitted: true,
-      error: { code: "provenance_failed", message: "database unavailable" },
-    });
-    expect(config.agents?.list?.[0]?.id).toBe("worker");
+    await expect(
+      applyClawAddPlan(plan, {
+        commitConfig: async (transform) => {
+          config = transform(config);
+        },
+        persistRecord: () => {
+          throw new Error("database unavailable");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "provenance_failed" });
+    expect(config.agents?.list).toBeUndefined();
   });
 });

@@ -1874,3 +1874,19 @@ CREATE TABLE IF NOT EXISTS fleet_cells (
   container_name TEXT NOT NULL,
   data_dir TEXT NOT NULL
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS claw_installs (
+  agent_id TEXT PRIMARY KEY,
+  schema_version TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  claw_name TEXT NOT NULL,
+  claw_version TEXT NOT NULL,
+  package_root TEXT NOT NULL,
+  manifest_path TEXT NOT NULL,
+  integrity TEXT NOT NULL,
+  workspace TEXT NOT NULL UNIQUE,
+  agent_config_digest TEXT NOT NULL,
+  status TEXT NOT NULL,
+  added_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);

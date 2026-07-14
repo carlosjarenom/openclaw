@@ -139,9 +139,10 @@ describe("claws lifecycle cli e2e", () => {
 
     expect(result.code).toBe(1);
     expect(parseJson(result.stdout)).toMatchObject({
-      schemaVersion: "openclaw.clawAddResult.v1",
-      status: "failed",
-      error: { code: "unsupported_components" },
+      schemaVersion: "openclaw.clawAddPlan.v1",
+      blockers: expect.arrayContaining([
+        expect.objectContaining({ code: "package_install_unavailable" }),
+      ]),
     });
   });
 

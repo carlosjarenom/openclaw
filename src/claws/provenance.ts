@@ -1,6 +1,5 @@
 // Persists the root ownership record for one Claw-created agent and workspace.
 import { createHash } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import { stableStringify } from "../agents/stable-stringify.js";
 import {
   openOpenClawStateDatabase,
@@ -11,7 +10,7 @@ import type { ClawAddPlan } from "./types.js";
 
 export const CLAW_INSTALL_RECORD_SCHEMA_VERSION = "openclaw.clawInstallRecord.v1" as const;
 
-export type ClawInstallStatus = "complete" | "partial";
+export type ClawInstallStatus = "pending" | "complete" | "partial";
 
 export type PersistedClawInstall = {
   schemaVersion: typeof CLAW_INSTALL_RECORD_SCHEMA_VERSION;
@@ -39,26 +38,6 @@ type InstallRow = {
   added_at_ms: number | bigint;
   updated_at_ms: number | bigint;
 };
-
-function ensureClawInstallTable(db: DatabaseSync): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS claw_installs (
-      agent_id TEXT PRIMARY KEY,
-      schema_version TEXT NOT NULL,
-      source_kind TEXT NOT NULL,
-      claw_name TEXT NOT NULL,
-      claw_version TEXT NOT NULL,
-      package_root TEXT NOT NULL,
-      manifest_path TEXT NOT NULL,
-      integrity TEXT NOT NULL,
-      workspace TEXT NOT NULL UNIQUE,
-      agent_config_digest TEXT NOT NULL,
-      status TEXT NOT NULL,
-      added_at_ms INTEGER NOT NULL,
-      updated_at_ms INTEGER NOT NULL
-    );
-  `);
-}
 
 function digestAgentConfig(plan: ClawAddPlan): string {
   return `sha256:${createHash("sha256").update(stableStringify(plan.agent.config)).digest("hex")}`;
@@ -92,7 +71,6 @@ export function persistClawInstallRecord(
   const status = options.status ?? "complete";
   const agentConfigDigest = digestAgentConfig(plan);
   runOpenClawStateWriteTransaction(({ db }) => {
-    ensureClawInstallTable(db);
     db.prepare(
       `INSERT INTO claw_installs (
          agent_id, schema_version, source_kind, claw_name, claw_version,
@@ -131,12 +109,25 @@ export function persistClawInstallRecord(
   };
 }
 
+export function updateClawInstallRecordStatus(
+  agentId: string,
+  status: ClawInstallStatus,
+  options: OpenClawStateDatabaseOptions & { nowMs?: number } = {},
+): void {
+  runOpenClawStateWriteTransaction(({ db }) => {
+    db.prepare("UPDATE claw_installs SET status = ?, updated_at_ms = ? WHERE agent_id = ?").run(
+      status,
+      options.nowMs ?? Date.now(),
+      agentId,
+    );
+  }, options);
+}
+
 export function readClawInstallRecord(
   agentId: string,
   options: OpenClawStateDatabaseOptions = {},
 ): PersistedClawInstall | undefined {
   const database = openOpenClawStateDatabase(options);
-  ensureClawInstallTable(database.db);
   const row = database.db
     .prepare(
       `SELECT schema_version, source_kind, claw_name, claw_version, package_root,

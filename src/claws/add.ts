@@ -1,11 +1,16 @@
 // Applies the narrow agent/workspace creation slice of a consented Claw add plan.
 import { mkdir, rmdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { listAgentIds, resolveAgentWorkspaceDir } from "../agents/agent-scope-config.js";
 import { transformConfigFileWithRetry } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import { resolveUserPath } from "../utils.js";
-import { persistClawInstallRecord, type PersistedClawInstall } from "./provenance.js";
+import {
+  persistClawInstallRecord,
+  updateClawInstallRecordStatus,
+  type PersistedClawInstall,
+} from "./provenance.js";
 import { CLAW_OUTPUT_STABILITY, type ClawAddPlan } from "./types.js";
 
 export const CLAW_ADD_RESULT_SCHEMA_VERSION = "openclaw.clawAddResult.v1" as const;
@@ -40,19 +45,12 @@ function hasUnsupportedMutationActions(plan: ClawAddPlan): boolean {
   return plan.actions.some((action) => !["agent", "workspace"].includes(action.kind));
 }
 
-function configHasWorkspace(config: OpenClawConfig, workspace: string): boolean {
-  return (config.agents?.list ?? []).some(
-    (agent) =>
-      agent.workspace !== undefined &&
-      resolve(resolveUserPath(agent.workspace)) === resolve(workspace),
-  );
-}
-
 export async function applyClawAddPlan(
   plan: ClawAddPlan,
   options: OpenClawStateDatabaseOptions & {
     commitConfig?: ConfigCommit;
     persistRecord?: typeof persistClawInstallRecord;
+    updateRecord?: typeof updateClawInstallRecordStatus;
     nowMs?: number;
   } = {},
 ): Promise<ClawAddResult> {
@@ -66,7 +64,15 @@ export async function applyClawAddPlan(
     );
   }
 
-  const workspace = resolve(plan.agent.workspace);
+  const persistRecord = options.persistRecord ?? persistClawInstallRecord;
+  let installRecord: PersistedClawInstall;
+  try {
+    installRecord = persistRecord(plan, { ...options, status: "pending" });
+  } catch (error) {
+    throw new ClawAddMutationError("provenance_failed", (error as Error).message);
+  }
+
+  const workspace = resolve(resolveUserPath(plan.agent.workspace));
   await mkdir(dirname(workspace), { recursive: true });
   try {
     await mkdir(workspace);
@@ -88,13 +94,17 @@ export async function applyClawAddPlan(
       });
     await commit((config) => {
       const existingAgents = config.agents?.list ?? [];
-      if (existingAgents.some((agent) => agent.id === plan.agent.finalId)) {
+      if (listAgentIds(config).includes(plan.agent.finalId)) {
         throw new ClawAddMutationError(
           "agent_id_collision",
           `Agent ${JSON.stringify(plan.agent.finalId)} was created after planning.`,
         );
       }
-      if (configHasWorkspace(config, workspace)) {
+      if (
+        listAgentIds(config).some(
+          (agentId) => resolve(resolveAgentWorkspaceDir(config, agentId)) === workspace,
+        )
+      ) {
         throw new ClawAddMutationError(
           "workspace_collision",
           `Workspace ${JSON.stringify(workspace)} is already assigned to an agent.`,
@@ -111,12 +121,16 @@ export async function applyClawAddPlan(
     });
   } catch (error) {
     await rmdir(workspace).catch(() => undefined);
+    (options.updateRecord ?? updateClawInstallRecordStatus)(plan.agent.finalId, "partial", options);
     throw error;
   }
 
   try {
-    const persistRecord = options.persistRecord ?? persistClawInstallRecord;
-    const installRecord = persistRecord(plan, options);
+    (options.updateRecord ?? updateClawInstallRecordStatus)(
+      plan.agent.finalId,
+      "complete",
+      options,
+    );
     return {
       schemaVersion: CLAW_ADD_RESULT_SCHEMA_VERSION,
       stability: CLAW_OUTPUT_STABILITY,
@@ -127,7 +141,11 @@ export async function applyClawAddPlan(
       agent: plan.agent,
       workspaceCreated: true,
       configCommitted: true,
-      installRecord,
+      installRecord: {
+        ...installRecord,
+        status: "complete",
+        updatedAtMs: options.nowMs ?? Date.now(),
+      },
     };
   } catch (error) {
     return {
