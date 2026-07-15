@@ -7,7 +7,7 @@ import {
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
-import type { ClawAddPlan } from "./types.js";
+import type { ClawAddPlan, ClawPackage } from "./types.js";
 
 const CLAW_INSTALL_RECORD_SCHEMA_VERSION = "openclaw.clawInstallRecord.v1" as const;
 
@@ -264,4 +264,116 @@ export function deleteClawInstallRecord(
       );
     }
   }, options);
+}
+
+
+export const CLAW_PACKAGE_REF_SCHEMA_VERSION = "openclaw.clawPackageRef.v1" as const;
+
+export type PersistedClawPackageRef = {
+  schemaVersion: typeof CLAW_PACKAGE_REF_SCHEMA_VERSION;
+  agentId: string;
+  clawName: string;
+  kind: ClawPackage["kind"];
+  source: ClawPackage["source"];
+  ref: string;
+  version: string;
+  installedAtMs: number;
+};
+
+type PackageRefRow = {
+  schema_version: string;
+  agent_id: string;
+  claw_name: string;
+  package_kind: ClawPackage["kind"];
+  package_source: ClawPackage["source"];
+  package_ref: string;
+  package_version: string;
+  installed_at_ms: number | bigint;
+};
+
+function rowToPackageRef(row: PackageRefRow): PersistedClawPackageRef {
+  return {
+    schemaVersion: CLAW_PACKAGE_REF_SCHEMA_VERSION,
+    agentId: row.agent_id,
+    clawName: row.claw_name,
+    kind: row.package_kind,
+    source: row.package_source,
+    ref: row.package_ref,
+    version: row.package_version,
+    installedAtMs: Number(row.installed_at_ms),
+  };
+}
+
+export function persistClawPackageRef(
+  plan: ClawAddPlan,
+  pkg: ClawPackage,
+  options: OpenClawStateDatabaseOptions & { nowMs?: number } = {},
+): PersistedClawPackageRef {
+  const record: PersistedClawPackageRef = {
+    schemaVersion: CLAW_PACKAGE_REF_SCHEMA_VERSION,
+    agentId: plan.agent.finalId,
+    clawName: plan.claw.name,
+    kind: pkg.kind,
+    source: pkg.source,
+    ref: pkg.ref,
+    version: pkg.version,
+    installedAtMs: options.nowMs ?? Date.now(),
+  };
+  runOpenClawStateWriteTransaction(({ db }) => {
+    // sqlite-allow-raw: this Claw prototype state-table write is scoped to one owned row.
+    db.prepare(
+      `INSERT INTO claw_package_refs (
+         agent_id, package_kind, package_source, package_ref, package_version,
+         schema_version, claw_name, installed_at_ms
+       ) VALUES (
+         @agent_id, @package_kind, @package_source, @package_ref, @package_version,
+         @schema_version, @claw_name, @installed_at_ms
+       )`,
+    ).run({
+      agent_id: record.agentId,
+      package_kind: record.kind,
+      package_source: record.source,
+      package_ref: record.ref,
+      package_version: record.version,
+      schema_version: record.schemaVersion,
+      claw_name: record.clawName,
+      installed_at_ms: record.installedAtMs,
+    });
+  }, options);
+  return record;
+}
+
+export function readClawPackageRefs(
+  options: OpenClawStateDatabaseOptions & {
+    kind?: ClawPackage["kind"];
+    source?: ClawPackage["source"];
+    ref?: string;
+    version?: string;
+  } = {},
+): PersistedClawPackageRef[] {
+  const database = openOpenClawStateDatabase(options);
+  const conditions: string[] = [];
+  const params: Record<string, string> = {};
+  for (const [column, value] of [
+    ["package_kind", options.kind],
+    ["package_source", options.source],
+    ["package_ref", options.ref],
+    ["package_version", options.version],
+  ] as const) {
+    if (value !== undefined) {
+      conditions.push(`${column} = @${column}`);
+      params[column] = value;
+    }
+  }
+  const where = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
+  const rows = database.db
+    // sqlite-allow-raw: read-only Claw package reference lookup with closed column filters.
+    .prepare(
+      `SELECT schema_version, agent_id, claw_name, package_kind, package_source,
+              package_ref, package_version, installed_at_ms
+         FROM claw_package_refs${where}
+        ORDER BY agent_id, package_kind, package_ref`,
+    )
+    .all(params) as PackageRefRow[];
+  return rows.map(rowToPackageRef);
 }

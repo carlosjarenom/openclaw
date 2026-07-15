@@ -1914,4 +1914,16 @@ CREATE TABLE IF NOT EXISTS claw_workspace_files (
   created_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL,
   PRIMARY KEY (agent_id, target_path)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS claw_package_refs (
+  agent_id TEXT NOT NULL,
+  package_kind TEXT NOT NULL,
+  package_source TEXT NOT NULL,
+  package_ref TEXT NOT NULL,
+  package_version TEXT NOT NULL,
+  schema_version TEXT NOT NULL,
+  claw_name TEXT NOT NULL,
+  installed_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (agent_id, package_kind, package_source, package_ref, package_version)
 ) STRICT;\n`;

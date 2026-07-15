@@ -7,6 +7,7 @@ import {
 } from "../claws/add.js";
 import { assertExperimentalClawsEnabled } from "../claws/experimental.js";
 import { buildClawAddPlan } from "../claws/lifecycle.js";
+import { preflightClawPackage } from "../claws/packages.js";
 import { readClawInstallRecord } from "../claws/provenance.js";
 import { readClawManifestFile } from "../claws/reader.js";
 import {
@@ -179,6 +180,7 @@ export async function runClawsAddCommand(
     existingWorkspacePaths,
     existingMcpServerNames: Object.keys(config.mcp?.servers ?? {}),
     existingCronJobIds: cronStore.store.jobs.map((job) => job.id),
+    packagePreflight: preflightClawPackage,
   };
   let plan = await buildClawAddPlan({
     manifest: result.manifest,
