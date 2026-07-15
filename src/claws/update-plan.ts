@@ -1,11 +1,14 @@
 // Builds read-only, agent-centric Claw update plans from grouped manifests and ownership state.
 import { createHash } from "node:crypto";
 import { stableStringify } from "../agents/stable-stringify.js";
+import { normalizeConfiguredMcpServers } from "../config/mcp-config-normalize.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { root as fsSafeRoot } from "../infra/fs-safe.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import { readClawStatus } from "./lifecycle-state.js";
-import { buildClawAddPlan } from "./lifecycle.js";
+import { buildClawAddPlan, type ClawAddPlanContext } from "./lifecycle.js";
 import { digestClawMcpServer } from "./mcp.js";
+import { readClawPackageRefs } from "./provenance.js";
 import {
   CLAW_OUTPUT_STABILITY,
   type ClawDiagnostic,
@@ -109,11 +112,13 @@ export async function buildClawUpdatePlan(params: {
   targetSource: ClawSourceIdentity;
   config: OpenClawConfig;
   stateOptions?: OpenClawStateDatabaseOptions;
+  packagePreflight?: ClawAddPlanContext["packagePreflight"];
   diagnostics?: ClawDiagnostic[];
 }): Promise<ClawUpdatePlan> {
   const status = await readClawStatus(params.agentId, {
     ...params.stateOptions,
     config: params.config,
+    readOnly: true,
   });
   if (status.records.length === 0) {
     return emptyPlan({
@@ -173,7 +178,11 @@ export async function buildClawUpdatePlan(params: {
     manifest: params.targetManifest,
     source: params.targetSource,
     diagnostics: params.diagnostics,
-    context: { agentId, workspace: record.install.workspace },
+    context: {
+      agentId,
+      workspace: record.install.workspace,
+      packagePreflight: params.packagePreflight,
+    },
   });
   const blockers = targetPlan.blockers.filter(
     (entry) => entry.code !== "workspace_collision" && entry.code !== "agent_id_collision",
@@ -213,6 +222,10 @@ export async function buildClawUpdatePlan(params: {
       .map((action) => [action.id, action] as const),
   );
   const currentFiles = new Map(record.workspaceFiles.map((file) => [file.path, file] as const));
+  const workspace = await fsSafeRoot(record.install.workspace, {
+    hardlinks: "reject",
+    symlinks: "reject",
+  });
   for (const [path, target] of targetFiles) {
     const current = currentFiles.get(path);
     if (!target.digest) {
@@ -226,13 +239,24 @@ export async function buildClawUpdatePlan(params: {
       });
       continue;
     }
-    const action = !current
-      ? "add"
-      : manualState(current.state)
+    let unownedDestination: "absent" | "occupied" | "unsafe" = "absent";
+    if (!current) {
+      try {
+        unownedDestination = (await workspace.exists(path)) ? "occupied" : "absent";
+      } catch {
+        unownedDestination = "unsafe";
+      }
+    }
+    const action =
+      !current && unownedDestination !== "absent"
         ? "manual"
-        : current.contentDigest === target.digest && current.state === "unchanged"
-          ? "unchanged"
-          : "change";
+        : !current
+          ? "add"
+          : manualState(current.state)
+            ? "manual"
+            : current.contentDigest === target.digest && current.state === "unchanged"
+              ? "unchanged"
+              : "change";
     actions.push({
       kind: "workspaceFile",
       id: path,
@@ -240,13 +264,17 @@ export async function buildClawUpdatePlan(params: {
       target: `${record.install.workspace}:${path}`,
       blocked: action === "manual",
       reason:
-        action === "add"
-          ? "Target manifest adds a managed workspace file."
-          : action === "manual"
-            ? "Local workspace content changed or became unsafe and must be reconciled manually."
-            : action === "unchanged"
-              ? "Managed workspace content already matches the target source."
-              : "Target source changes or restores managed workspace content.",
+        unownedDestination === "occupied"
+          ? "Workspace path already exists without Claw ownership and must be preserved."
+          : unownedDestination === "unsafe"
+            ? "Workspace path is unsafe to inspect and cannot be claimed automatically."
+            : action === "add"
+              ? "Target manifest adds a managed workspace file."
+              : action === "manual"
+                ? "Local workspace content changed or became unsafe and must be reconciled manually."
+                : action === "unchanged"
+                  ? "Managed workspace content already matches the target source."
+                  : "Target source changes or restores managed workspace content.",
       ...(current ? { currentDigest: current.contentDigest } : {}),
       desiredDigest: target.digest,
     });
@@ -270,25 +298,44 @@ export async function buildClawUpdatePlan(params: {
   }
 
   const packageKey = (value: { kind: string; ref: string }) => `${value.kind}:${value.ref}`;
+  const allPackages = readClawPackageRefs(params.stateOptions);
   const currentPackages = new Map(record.packages.map((pkg) => [packageKey(pkg), pkg] as const));
   const targetPackages = new Map(
     params.targetManifest.packages.map((pkg) => [packageKey(pkg), pkg] as const),
   );
   for (const [key, target] of targetPackages) {
     const current = currentPackages.get(key);
-    const action = !current ? "add" : current.version === target.version ? "unchanged" : "change";
+    const conflictingPluginPin =
+      target.kind === "plugin" &&
+      allPackages.some(
+        (candidate) =>
+          candidate.agentId !== agentId &&
+          candidate.kind === target.kind &&
+          candidate.source === target.source &&
+          candidate.ref === target.ref &&
+          candidate.version !== target.version,
+      );
+    const action = conflictingPluginPin
+      ? "manual"
+      : !current
+        ? "add"
+        : current.version === target.version
+          ? "unchanged"
+          : "change";
     actions.push({
       kind: "package",
       id: key,
       action,
       target: `${target.source}:${target.ref}@${target.version}`,
-      blocked: false,
+      blocked: action === "manual",
       reason:
-        action === "add"
-          ? "Target manifest adds a package reference."
-          : action === "unchanged"
-            ? "Recorded package reference already matches the exact target version."
-            : "Target manifest changes the exact package version.",
+        action === "manual"
+          ? "Another Claw pins an incompatible version of this shared plugin."
+          : action === "add"
+            ? "Target manifest adds a package reference."
+            : action === "unchanged"
+              ? "Recorded package reference already matches the exact target version."
+              : "Target manifest changes the exact package version.",
       ...(current ? { currentDigest: digest(current) } : {}),
       desiredDigest: digest(target),
     });
@@ -308,25 +355,30 @@ export async function buildClawUpdatePlan(params: {
     }
   }
 
+  const configuredMcpServers = normalizeConfiguredMcpServers(params.config.mcp?.servers);
   const currentMcp = new Map(record.mcpServers.map((server) => [server.name, server] as const));
   for (const [name, target] of Object.entries(params.targetManifest.mcpServers)) {
     const current = currentMcp.get(name);
     const desiredDigest = digestClawMcpServer(target);
-    const action = !current
-      ? "add"
-      : manualState(current.state)
-        ? "manual"
-        : current.configDigest === desiredDigest && current.state === "present"
-          ? "unchanged"
-          : "change";
+    const unownedLiveServer = !current && Object.hasOwn(configuredMcpServers, name);
+    const action = unownedLiveServer
+      ? "manual"
+      : !current
+        ? "add"
+        : manualState(current.state)
+          ? "manual"
+          : current.configDigest === desiredDigest && current.state === "present"
+            ? "unchanged"
+            : "change";
     actions.push({
       kind: "mcpServer",
       id: name,
       action,
       target: `mcp.servers.${name}`,
       blocked: action === "manual",
-      reason:
-        action === "manual"
+      reason: unownedLiveServer
+        ? "MCP server name already exists without this Claw's ownership."
+        : action === "manual"
           ? "MCP ownership is unresolved or live config drifted and must be reconciled manually."
           : action === "unchanged"
             ? "Owned MCP config digest already matches the target declaration."

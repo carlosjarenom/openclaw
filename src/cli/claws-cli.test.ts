@@ -661,6 +661,43 @@ describe("claws cli", () => {
     });
   });
 
+  it("uses the source recorded by the installed Claw when --from is omitted", async () => {
+    const { root } = await writePackage();
+    mocks.readClawStatus.mockResolvedValue({
+      schemaVersion: "openclaw.clawStatus.v1",
+      records: [
+        {
+          install: {
+            agentId: "demo-agent",
+            claw: {
+              kind: "package",
+              name: "@acme/demo-agent",
+              version: "1.0.0",
+              packageRoot: root,
+              manifestPath: join(root, "openclaw.claw.json"),
+              integrity: "sha256:old",
+            },
+          },
+          workspaceFiles: [],
+          packages: [],
+          mcpServers: [],
+          cronJobs: [],
+        },
+      ],
+      summary: { claws: 1 },
+    });
+
+    await runCli(["claws", "update", "demo-agent", "--dry-run", "--json"]);
+
+    expect(mocks.readClawStatus).toHaveBeenCalledWith("demo-agent", { readOnly: true });
+    expect(mocks.buildClawUpdatePlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "demo-agent",
+        targetSource: expect.objectContaining({ name: "@acme/demo-agent", version: "1.2.3" }),
+      }),
+    );
+  });
+
   it("fails closed when update is invoked without dry-run", async () => {
     const { root } = await writePackage();
 

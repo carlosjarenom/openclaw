@@ -17,7 +17,7 @@ export type ClawsAddOptions = {
 };
 
 export type ClawsStatusOptions = { json?: boolean };
-export type ClawsUpdateOptions = { from: string; dryRun?: boolean; json?: boolean };
+export type ClawsUpdateOptions = { from?: string; dryRun?: boolean; json?: boolean };
 export type ClawsRemoveOptions = {
   dryRun?: boolean;
   yes?: boolean;
@@ -78,7 +78,7 @@ export function registerClawsCli(program: Command) {
     .command("update")
     .description("Plan changes to one installed Claw agent")
     .argument("<claw-or-agent>", "Installed package name or final agent id")
-    .requiredOption("--from <source>", "Target Claw package directory or grouped manifest")
+    .option("--from <source>", "Override the target source recorded at Claw add time")
     .option("--dry-run", "Preview update actions without mutating state", false)
     .option("--json", "Print JSON", false)
     .action(async (target: string, opts: ClawsUpdateOptions) => {

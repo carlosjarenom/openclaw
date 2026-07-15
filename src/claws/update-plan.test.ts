@@ -12,10 +12,12 @@ import { buildClawAddPlan } from "./lifecycle.js";
 import { installClawMcpServers } from "./mcp.js";
 import { persistClawPackageRef } from "./provenance.js";
 import { parseClawManifest } from "./schema.js";
-import type { ClawManifest, ClawPackage, ClawSourceIdentity } from "./types.js";
+import type { ClawPackage, ClawSourceIdentity } from "./types.js";
 import { buildClawUpdatePlan } from "./update-plan.js";
 
 afterEach(() => closeOpenClawStateDatabaseForTest());
+
+const packagePreflight = async () => ({ ok: true, action: "install" as const });
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "openclaw-claw-update-"));
@@ -58,8 +60,11 @@ async function fixture() {
   const addPlan = await buildClawAddPlan({
     manifest: parsed.manifest,
     source,
-    context: { workspace: join(root, "workspace-worker") },
+    context: { workspace: join(root, "workspace-worker"), packagePreflight },
   });
+  if (addPlan.blockers.length > 0) {
+    throw new Error(JSON.stringify(addPlan.blockers));
+  }
   let config: OpenClawConfig = {};
   await applyClawAddPlan(addPlan, {
     env,
@@ -80,7 +85,7 @@ async function fixture() {
       }),
     cronGateway: { add: async () => ({ id: "scheduler-daily" }) },
   });
-  return { root, env, config, manifest: parsed.manifest, source };
+  return { root, env, config, manifest: parsed.manifest, source, addPlan };
 }
 
 function targetSource(root: string, version: string, integrity: string): ClawSourceIdentity {
@@ -105,6 +110,7 @@ describe("buildClawUpdatePlan", () => {
       targetSource: current.source,
       config: current.config,
       stateOptions: { env: current.env },
+      packagePreflight,
     });
 
     expect(plan).toMatchObject({
@@ -128,6 +134,7 @@ describe("buildClawUpdatePlan", () => {
       targetSource: current.source,
       config: current.config,
       stateOptions: { env: current.env },
+      packagePreflight,
     });
 
     expect(plan).toMatchObject({ found: true, agentId: "worker", blockers: [] });
@@ -146,6 +153,7 @@ describe("buildClawUpdatePlan", () => {
       targetSource: current.source,
       config: current.config,
       stateOptions: { env: current.env },
+      packagePreflight,
     });
 
     expect(plan.actions).toContainEqual(
@@ -202,6 +210,7 @@ describe("buildClawUpdatePlan", () => {
       targetSource: targetSource(current.root, "2.0.0", "sha256:target"),
       config: current.config,
       stateOptions: { env: current.env },
+      packagePreflight,
     });
 
     expect(plan.summary).toMatchObject({
@@ -238,6 +247,7 @@ describe("buildClawUpdatePlan", () => {
       targetSource: current.source,
       config: current.config,
       stateOptions: { env: current.env },
+      packagePreflight,
     });
 
     expect(plan.actions).toEqual(
@@ -254,6 +264,81 @@ describe("buildClawUpdatePlan", () => {
     );
   });
 
+  it("blocks unowned workspace, MCP, and incompatible shared plugin claims", async () => {
+    const current = await fixture();
+    await writeFile(join(current.root, "NOTES-source.md"), "managed notes\n", "utf8");
+    await writeFile(join(current.root, "workspace-worker", "NOTES.md"), "operator notes\n", "utf8");
+    current.config.mcp = {
+      ...current.config.mcp,
+      servers: {
+        ...current.config.mcp?.servers,
+        search: { command: "node", args: ["operator-search.mjs"] },
+      },
+    };
+    persistClawPackageRef(
+      {
+        ...current.addPlan,
+        agent: { ...current.addPlan.agent, finalId: "other-agent" },
+      },
+      { kind: "plugin", source: "clawhub", ref: "audit", version: "0.9.0" },
+      { env: current.env },
+    );
+    const parsed = parseClawManifest({
+      ...current.manifest,
+      workspace: {
+        ...current.manifest.workspace,
+        files: [
+          ...current.manifest.workspace.files,
+          { source: "NOTES-source.md", path: "NOTES.md" },
+        ],
+      },
+      packages: [
+        ...current.manifest.packages,
+        { kind: "plugin", source: "clawhub", ref: "audit", version: "1.0.0" },
+      ],
+      mcpServers: {
+        ...current.manifest.mcpServers,
+        search: { command: "uvx", args: ["search-mcp"] },
+      },
+    });
+    if (!parsed.ok) {
+      throw new Error(JSON.stringify(parsed.diagnostics));
+    }
+
+    const plan = await buildClawUpdatePlan({
+      agentId: "worker",
+      targetManifest: parsed.manifest,
+      targetSource: targetSource(current.root, "2.0.0", "sha256:target"),
+      config: current.config,
+      stateOptions: { env: current.env },
+      packagePreflight,
+    });
+
+    expect(plan.actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "workspaceFile",
+          id: "NOTES.md",
+          action: "manual",
+          blocked: true,
+        }),
+        expect.objectContaining({
+          kind: "mcpServer",
+          id: "search",
+          action: "manual",
+          blocked: true,
+        }),
+        expect.objectContaining({
+          kind: "package",
+          id: "plugin:audit",
+          action: "manual",
+          blocked: true,
+        }),
+      ]),
+    );
+    expect(plan.summary.blocked).toBe(3);
+  });
+
   it("fails closed for missing agents and mismatched package identity", async () => {
     const current = await fixture();
     const missing = await buildClawUpdatePlan({
@@ -262,6 +347,7 @@ describe("buildClawUpdatePlan", () => {
       targetSource: current.source,
       config: current.config,
       stateOptions: { env: current.env },
+      packagePreflight,
     });
     expect(missing.blockers).toContainEqual(expect.objectContaining({ code: "claw_not_found" }));
 
@@ -271,6 +357,7 @@ describe("buildClawUpdatePlan", () => {
       targetSource: { ...current.source, name: "@other/worker" },
       config: current.config,
       stateOptions: { env: current.env },
+      packagePreflight,
     });
     expect(mismatch.blockers).toContainEqual(
       expect.objectContaining({ code: "claw_identity_mismatch" }),

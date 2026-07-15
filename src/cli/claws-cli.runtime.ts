@@ -430,8 +430,53 @@ export async function runClawsUpdateCommand(
     return;
   }
 
-  const loaded = await readClawManifestFile(opts.from);
+  let source = opts.from;
+  if (!source) {
+    const status = await readClawStatus(target, { readOnly: true });
+    if (status.records.length !== 1) {
+      const message =
+        status.records.length === 0
+          ? `No installed Claw agent matches ${JSON.stringify(target)}.`
+          : `Claw name ${JSON.stringify(target)} matches multiple agents; use an agent id.`;
+      if (opts.json) {
+        writeRuntimeJson(runtime, {
+          schemaVersion: CLAW_UPDATE_PLAN_SCHEMA_VERSION,
+          stability: CLAW_OUTPUT_STABILITY,
+          dryRun: true,
+          mutationAllowed: false,
+          valid: false,
+          diagnostics: [
+            {
+              level: "error",
+              code: status.records.length === 0 ? "claw_not_found" : "claw_ambiguous",
+              path: "$",
+              message,
+            },
+          ],
+        });
+      } else {
+        runtime.error(message);
+      }
+      runtime.exit(1);
+      return;
+    }
+    const recorded = status.records[0]!.install.claw;
+    source = recorded.kind === "package" ? recorded.packageRoot : recorded.manifestPath;
+  }
+
+  const loaded = await readClawManifestFile(source);
   if (!loaded.ok) {
+    const diagnostics = opts.from
+      ? loaded.diagnostics
+      : [
+          ...loaded.diagnostics,
+          {
+            level: "error" as const,
+            code: "recorded_source_unavailable",
+            path: "$",
+            message: "The recorded Claw source is unavailable; pass --from to override it.",
+          },
+        ];
     if (opts.json) {
       writeRuntimeJson(runtime, {
         schemaVersion: CLAW_UPDATE_PLAN_SCHEMA_VERSION,
@@ -439,10 +484,10 @@ export async function runClawsUpdateCommand(
         dryRun: true,
         mutationAllowed: false,
         valid: false,
-        diagnostics: loaded.diagnostics,
+        diagnostics,
       });
     } else {
-      runtime.error(formatDiagnostics(loaded.diagnostics));
+      runtime.error(formatDiagnostics(diagnostics));
     }
     runtime.exit(1);
     return;
@@ -453,6 +498,7 @@ export async function runClawsUpdateCommand(
     targetManifest: loaded.manifest,
     targetSource: loaded.source,
     config: loadConfig(),
+    packagePreflight: preflightClawPackage,
     diagnostics: loaded.diagnostics,
   });
   if (opts.json) {
