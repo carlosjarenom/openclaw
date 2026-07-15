@@ -35,6 +35,7 @@ import {
   CLAW_UPDATE_PLAN_SCHEMA_VERSION,
   type ClawUpdatePlan,
 } from "../claws/update-plan.js";
+import { agentsDeleteCommand } from "../commands/agents.commands.delete.js";
 // Runtime handlers for experimental local Claws commands.
 import { getRuntimeConfig } from "../config/config.js";
 import { listConfiguredMcpServers } from "../config/mcp-config.js";
