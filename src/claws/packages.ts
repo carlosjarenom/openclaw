@@ -30,7 +30,7 @@ export class ClawPackageInstallError extends Error {
   }
 }
 
-type PackageInstallerDeps = {
+export type PackageInstallerDeps = {
   installPlugin?: typeof runPluginInstallCommand;
   uninstallPlugin?: typeof runPluginUninstallCommand;
   installSkill?: typeof installSkillFromClawHub;
