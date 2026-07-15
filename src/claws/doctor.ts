@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { HealthFinding } from "../flows/health-checks.js";
 import {
+  openExistingOpenClawStateDatabaseReadOnly,
   openOpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
@@ -153,13 +154,19 @@ export async function collectClawStateHealthFindings(
   if (!isExperimentalClawsEnabled(options.env ?? process.env)) {
     return [];
   }
+  const database = openExistingOpenClawStateDatabaseReadOnly(options);
+  if (!database) {
+    return [];
+  }
   try {
     const status = await readClawStatus(undefined, {
       ...options,
+      database,
+      readOnly: true,
       ...(options.cfg ? { config: options.cfg } : {}),
     });
     const findings = status.records.flatMap(collectInstallFindings);
-    for (const agentId of orphanedAgentIds(options)) {
+    for (const agentId of orphanedAgentIds({ ...options, database, readOnly: true })) {
       findings.push(
         finding({
           message: `Claw ownership references for agent ${JSON.stringify(agentId)} have no root install record.`,
@@ -180,5 +187,7 @@ export async function collectClawStateHealthFindings(
         requirement: "Claw doctor diagnostics require readable lifecycle state",
       }),
     ];
+  } finally {
+    database.walMaintenance.close();
   }
 }

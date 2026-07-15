@@ -1,9 +1,11 @@
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { applyClawAddPlan } from "./add.js";
 import { installClawCronJobs } from "./cron.js";
 import { collectClawStateHealthFindings } from "./doctor.js";
@@ -83,6 +85,45 @@ async function installFixture(
 }
 
 describe("collectClawStateHealthFindings", () => {
+  it("does not create state when the database is absent", async () => {
+    const current = await fixture();
+    const databasePath = resolveOpenClawStateSqlitePath(current.env);
+
+    await expect(collectClawStateHealthFindings({ env: current.env, cfg: {} })).resolves.toEqual(
+      [],
+    );
+    await expect(access(databasePath)).rejects.toThrow();
+  });
+
+  it("does not change existing database bytes, metadata, schema, or journal mode", async () => {
+    const current = await installFixture({ withMcp: true, withCron: true });
+    closeOpenClawStateDatabaseForTest();
+    const databasePath = resolveOpenClawStateSqlitePath(current.env);
+    const beforeBytes = await readFile(databasePath);
+    const beforeStat = await stat(databasePath);
+    const beforeDb = new DatabaseSync(databasePath, { readOnly: true });
+    const beforeSchema = beforeDb
+      .prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name")
+      .all();
+    const beforeVersion = beforeDb.prepare("PRAGMA user_version").get();
+    const beforeJournal = beforeDb.prepare("PRAGMA journal_mode").get();
+    beforeDb.close();
+
+    await collectClawStateHealthFindings({ env: current.env, cfg: current.getConfig() });
+
+    const afterStat = await stat(databasePath);
+    const afterDb = new DatabaseSync(databasePath, { readOnly: true });
+    expect(await readFile(databasePath)).toEqual(beforeBytes);
+    expect(afterStat.mtimeMs).toBe(beforeStat.mtimeMs);
+    expect(afterStat.mode).toBe(beforeStat.mode);
+    expect(
+      afterDb.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").all(),
+    ).toEqual(beforeSchema);
+    expect(afterDb.prepare("PRAGMA user_version").get()).toEqual(beforeVersion);
+    expect(afterDb.prepare("PRAGMA journal_mode").get()).toEqual(beforeJournal);
+    afterDb.close();
+  });
+
   it("stays hidden when the experimental Claws surface is disabled", async () => {
     const current = await fixture();
     await expect(
@@ -172,7 +213,7 @@ describe("collectClawStateHealthFindings", () => {
       expect.arrayContaining([
         expect.objectContaining({ message: expect.stringContaining("partial install record") }),
         expect.objectContaining({
-          message: expect.stringContaining("failed ownership state"),
+          message: expect.stringContaining("pending ownership state"),
           path: "claws.worker.cronJobs.daily-report",
         }),
       ]),

@@ -112,6 +112,8 @@ export type OpenClawStateDatabase = {
 export type OpenClawStateDatabaseOptions = {
   env?: NodeJS.ProcessEnv;
   path?: string;
+  database?: OpenClawStateDatabase;
+  readOnly?: boolean;
 };
 export type OpenClawStateDatabaseSchemaMigration = {
   kind:
@@ -1641,6 +1643,32 @@ function resolveDatabasePath(options: OpenClawStateDatabaseOptions = {}): string
   return path.resolve(options.path ?? resolveOpenClawStateSqlitePath(options.env ?? process.env));
 }
 
+/** Open existing shared state without creating, migrating, chmodding, or configuring it. */
+export function openExistingOpenClawStateDatabaseReadOnly(
+  options: OpenClawStateDatabaseOptions = {},
+): OpenClawStateDatabase | undefined {
+  const pathname = resolveDatabasePath(options);
+  if (!existsSync(pathname)) {
+    return undefined;
+  }
+  const sqlite = requireNodeSqlite();
+  const db = new sqlite.DatabaseSync(pathname, { readOnly: true });
+  return {
+    db,
+    path: pathname,
+    walMaintenance: {
+      checkpoint: () => false,
+      close: () => {
+        if (!db.isOpen) {
+          return false;
+        }
+        db.close();
+        return true;
+      },
+    },
+  };
+}
+
 function assertStateDatabaseIntegrityBeforeMutation(
   database: DatabaseSync,
   pathname: string,
@@ -1656,6 +1684,9 @@ function assertStateDatabaseIntegrityBeforeMutation(
 export function openOpenClawStateDatabase(
   options: OpenClawStateDatabaseOptions = {},
 ): OpenClawStateDatabase {
+  if (options.database) {
+    return options.database;
+  }
   const env = options.env ?? process.env;
   const pathname = resolveDatabasePath(options);
   const cached = cachedDatabases.get(pathname);
