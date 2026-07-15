@@ -45,6 +45,11 @@ function plan(packages: ClawPackage[]): ClawAddPlan {
   };
 }
 
+const completePackageRef = vi.fn((ref: PersistedClawPackageRef) => ({
+  ...ref,
+  status: "complete" as const,
+}));
+
 describe("installClawPackages", () => {
   it("installs skills into the created agent workspace at the pinned version", async () => {
     const installSkill = vi.fn().mockResolvedValue({
@@ -57,7 +62,7 @@ describe("installClawPackages", () => {
 
     await installClawPackages(
       plan([{ kind: "skill", source: "clawhub", ref: "@owner/triage", version: "1.2.3" }]),
-      { deps: { installSkill, persistPackageRef } },
+      { deps: { installSkill, persistPackageRef, completePackageRef } },
     );
 
     expect(installSkill).toHaveBeenCalledWith(
@@ -67,16 +72,21 @@ describe("installClawPackages", () => {
         version: "1.2.3",
       }),
     );
-    expect(persistPackageRef).toHaveBeenCalledOnce();
+    expect(persistPackageRef).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ status: "pending", ownership: "claw-installed" }),
+    );
   });
 
   it("installs plugins through the shared plugin surface", async () => {
     const installPlugin = vi.fn().mockResolvedValue(undefined);
     const persistPackageRef = vi.fn().mockReturnValue({ kind: "plugin" });
+    const preflightPlugin = vi.fn().mockResolvedValue({ ok: true, action: "install" });
 
     await installClawPackages(
       plan([{ kind: "plugin", source: "clawhub", ref: "@owner/audit", version: "2.0.1" }]),
-      { deps: { installPlugin, persistPackageRef } },
+      { deps: { installPlugin, preflightPlugin, persistPackageRef, completePackageRef } },
     );
 
     expect(installPlugin).toHaveBeenCalledWith(
@@ -88,13 +98,32 @@ describe("installClawPackages", () => {
     );
   });
 
-  it("retains successful package references when a later install fails", async () => {
+  it("records a dependency ref without reinstalling an exact reused plugin", async () => {
+    const installPlugin = vi.fn();
+    const persistPackageRef = vi.fn().mockReturnValue({ kind: "plugin" });
+    const preflightPlugin = vi.fn().mockResolvedValue({ ok: true, action: "reuse" });
+
+    await installClawPackages(
+      plan([{ kind: "plugin", source: "clawhub", ref: "@owner/audit", version: "2.0.1" }]),
+      { deps: { installPlugin, preflightPlugin, persistPackageRef, completePackageRef } },
+    );
+
+    expect(installPlugin).not.toHaveBeenCalled();
+    expect(persistPackageRef).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ status: "complete", ownership: "preexisting" }),
+    );
+  });
+
+  it("retains the pending ref when a later install fails", async () => {
     const installSkill = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, slug: "one", version: "1.0.0", targetDir: "/one" })
       .mockResolvedValueOnce({ ok: false, error: "registry unavailable" });
-    const persisted = { kind: "skill", ref: "one" } as PersistedClawPackageRef;
-    const persistPackageRef = vi.fn().mockReturnValue(persisted);
+    const completed = { kind: "skill", ref: "one", status: "complete" } as PersistedClawPackageRef;
+    const pending = { kind: "skill", ref: "two", status: "pending" } as PersistedClawPackageRef;
+    const persistPackageRef = vi.fn().mockReturnValueOnce(completed).mockReturnValueOnce(pending);
 
     await expect(
       installClawPackages(
@@ -102,12 +131,12 @@ describe("installClawPackages", () => {
           { kind: "skill", source: "clawhub", ref: "one", version: "1.0.0" },
           { kind: "skill", source: "clawhub", ref: "two", version: "1.0.0" },
         ]),
-        { deps: { installSkill, persistPackageRef } },
+        { deps: { installSkill, persistPackageRef, completePackageRef } },
       ),
     ).rejects.toMatchObject({
       code: "package_install_failed",
       message: "registry unavailable",
-      installedPackages: [persisted],
+      installedPackages: [completed, pending],
     });
   });
 });

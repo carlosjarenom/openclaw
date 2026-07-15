@@ -268,6 +268,8 @@ export function deleteClawInstallRecord(
 
 
 export const CLAW_PACKAGE_REF_SCHEMA_VERSION = "openclaw.clawPackageRef.v1" as const;
+export type ClawPackageRefStatus = "pending" | "complete";
+export type ClawPackageOwnership = "claw-installed" | "preexisting";
 
 export type PersistedClawPackageRef = {
   schemaVersion: typeof CLAW_PACKAGE_REF_SCHEMA_VERSION;
@@ -277,6 +279,8 @@ export type PersistedClawPackageRef = {
   source: ClawPackage["source"];
   ref: string;
   version: string;
+  status: ClawPackageRefStatus;
+  ownership: ClawPackageOwnership;
   installedAtMs: number;
 };
 
@@ -288,6 +292,8 @@ type PackageRefRow = {
   package_source: ClawPackage["source"];
   package_ref: string;
   package_version: string;
+  package_status: ClawPackageRefStatus;
+  ownership: ClawPackageOwnership;
   installed_at_ms: number | bigint;
 };
 
@@ -300,6 +306,8 @@ function rowToPackageRef(row: PackageRefRow): PersistedClawPackageRef {
     source: row.package_source,
     ref: row.package_ref,
     version: row.package_version,
+    status: row.package_status,
+    ownership: row.ownership,
     installedAtMs: Number(row.installed_at_ms),
   };
 }
@@ -307,7 +315,11 @@ function rowToPackageRef(row: PackageRefRow): PersistedClawPackageRef {
 export function persistClawPackageRef(
   plan: ClawAddPlan,
   pkg: ClawPackage,
-  options: OpenClawStateDatabaseOptions & { nowMs?: number } = {},
+  options: OpenClawStateDatabaseOptions & {
+    nowMs?: number;
+    status?: ClawPackageRefStatus;
+    ownership?: ClawPackageOwnership;
+  } = {},
 ): PersistedClawPackageRef {
   const record: PersistedClawPackageRef = {
     schemaVersion: CLAW_PACKAGE_REF_SCHEMA_VERSION,
@@ -317,6 +329,8 @@ export function persistClawPackageRef(
     source: pkg.source,
     ref: pkg.ref,
     version: pkg.version,
+    status: options.status ?? "complete",
+    ownership: options.ownership ?? "claw-installed",
     installedAtMs: options.nowMs ?? Date.now(),
   };
   runOpenClawStateWriteTransaction(({ db }) => {
@@ -324,10 +338,10 @@ export function persistClawPackageRef(
     db.prepare(
       `INSERT INTO claw_package_refs (
          agent_id, package_kind, package_source, package_ref, package_version,
-         schema_version, claw_name, installed_at_ms
+         schema_version, claw_name, package_status, ownership, installed_at_ms
        ) VALUES (
          @agent_id, @package_kind, @package_source, @package_ref, @package_version,
-         @schema_version, @claw_name, @installed_at_ms
+         @schema_version, @claw_name, @package_status, @ownership, @installed_at_ms
        )`,
     ).run({
       agent_id: record.agentId,
@@ -337,10 +351,39 @@ export function persistClawPackageRef(
       package_version: record.version,
       schema_version: record.schemaVersion,
       claw_name: record.clawName,
+      package_status: record.status,
+      ownership: record.ownership,
       installed_at_ms: record.installedAtMs,
     });
   }, options);
   return record;
+}
+
+export function updateClawPackageRefStatus(
+  ref: PersistedClawPackageRef,
+  status: ClawPackageRefStatus,
+  options: OpenClawStateDatabaseOptions = {},
+): PersistedClawPackageRef {
+  runOpenClawStateWriteTransaction(({ db }) => {
+    // sqlite-allow-raw: this Claw package reference status update is scoped to one owned row.
+    db.prepare(
+      `UPDATE claw_package_refs
+          SET package_status = @package_status
+        WHERE agent_id = @agent_id
+          AND package_kind = @package_kind
+          AND package_source = @package_source
+          AND package_ref = @package_ref
+          AND package_version = @package_version`,
+    ).run({
+      agent_id: ref.agentId,
+      package_kind: ref.kind,
+      package_source: ref.source,
+      package_ref: ref.ref,
+      package_version: ref.version,
+      package_status: status,
+    });
+  }, options);
+  return { ...ref, status };
 }
 
 export function readClawPackageRefs(
@@ -349,6 +392,7 @@ export function readClawPackageRefs(
     source?: ClawPackage["source"];
     ref?: string;
     version?: string;
+    status?: ClawPackageRefStatus;
   } = {},
 ): PersistedClawPackageRef[] {
   const database = openOpenClawStateDatabase(options);
@@ -359,6 +403,7 @@ export function readClawPackageRefs(
     ["package_source", options.source],
     ["package_ref", options.ref],
     ["package_version", options.version],
+    ["package_status", options.status],
   ] as const) {
     if (value !== undefined) {
       conditions.push(`${column} = @${column}`);
@@ -370,7 +415,7 @@ export function readClawPackageRefs(
     // sqlite-allow-raw: read-only Claw package reference lookup with closed column filters.
     .prepare(
       `SELECT schema_version, agent_id, claw_name, package_kind, package_source,
-              package_ref, package_version, installed_at_ms
+              package_ref, package_version, package_status, ownership, installed_at_ms
          FROM claw_package_refs${where}
         ORDER BY agent_id, package_kind, package_ref`,
     )
