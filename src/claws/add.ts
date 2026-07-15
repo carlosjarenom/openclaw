@@ -8,6 +8,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import { normalizeWindowsPathForComparison } from "../infra/path-guards.js";
 import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
+import type { RuntimeEnv } from "../runtime.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import { resolveUserPath } from "../utils.js";
 import { ClawPackageInstallError, installClawPackages } from "./packages.js";
@@ -36,6 +37,7 @@ type ClawAddApplyOptions = OpenClawStateDatabaseOptions & {
   deleteRecord?: typeof deleteClawInstallRecord;
   updateRecord?: typeof updateClawInstallRecordStatus;
   createWorkspaceFiles?: typeof createClawWorkspaceFiles;
+  runtime?: RuntimeEnv;
   installPackages?: typeof installClawPackages;
   nowMs?: number;
 };
@@ -446,7 +448,7 @@ export async function applyClawAddPlan(
       workspaceFiles,
       packages,
       error: { code: "provenance_failed", message: (error as Error).message },
-    };
+    });
   }
 
 }
