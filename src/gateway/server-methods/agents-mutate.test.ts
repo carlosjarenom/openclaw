@@ -63,6 +63,8 @@ const mocks = vi.hoisted(() => ({
     size: 0,
   })),
   rootWrite: vi.fn(async (_params?: unknown) => {}),
+  cronList: vi.fn(async () => []),
+  cronRemove: vi.fn(async () => ({ ok: true, removed: true })),
 }));
 
 const RESERVED_SYSTEM_AGENT_IDS_FOR_TEST = ["openclaw", "crestodian"] as const; // reserved ids
@@ -281,7 +283,10 @@ function makeCall(method: keyof typeof agentsHandlers, params: Record<string, un
   const promise = handler({
     params,
     respond,
-    context: { getRuntimeConfig: () => mocks.loadConfigReturn } as never,
+    context: {
+      getRuntimeConfig: () => mocks.loadConfigReturn,
+      cron: { list: mocks.cronList, remove: mocks.cronRemove },
+    } as never,
     req: { type: "req" as const, id: "1", method },
     client: null,
     isWebchatConnect: () => false,
@@ -1178,6 +1183,29 @@ describe("agents.delete", () => {
     expect(mocks.writeConfigFile).toHaveBeenCalled();
     // moveToTrashBestEffort calls fs.lstat then movePathToTrash for each dir
     expect(mocks.movePathToTrash).toHaveBeenCalled();
+  });
+
+  it("removes agent-owned cron jobs through the canonical delete lifecycle", async () => {
+    mocks.cronList.mockResolvedValueOnce([
+      { id: "owned", agentId: "test-agent" },
+      { id: "other", agentId: "main" },
+    ] as never);
+
+    const { promise } = makeCall("agents.delete", { agentId: "test-agent" });
+    await promise;
+
+    expect(mocks.cronRemove).toHaveBeenCalledWith("owned");
+    expect(mocks.cronRemove).not.toHaveBeenCalledWith("other");
+  });
+
+  it("does not commit agent deletion when cron cleanup fails", async () => {
+    mocks.cronList.mockResolvedValueOnce([{ id: "owned", agentId: "test-agent" }] as never);
+    mocks.cronRemove.mockRejectedValueOnce(new Error("scheduler unavailable"));
+
+    const { promise } = makeCall("agents.delete", { agentId: "test-agent" });
+
+    await expect(promise).rejects.toThrow("scheduler unavailable");
+    expect(mocks.writeConfigFile).not.toHaveBeenCalled();
   });
 
   it("deletes workspace state after removing the last owner's workspace", async () => {

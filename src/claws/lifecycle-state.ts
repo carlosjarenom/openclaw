@@ -667,6 +667,7 @@ export async function applyClawRemovePlan(
         action: "error",
         message,
       });
+      updateClawInstallRecordStatus(agentId, "partial", options);
       return {
         schemaVersion: CLAW_REMOVE_RESULT_SCHEMA_VERSION,
         stability: CLAW_OUTPUT_STABILITY,

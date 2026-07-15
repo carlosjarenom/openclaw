@@ -697,4 +697,22 @@ describe("buildClawAddPlan", () => {
     expect(repeated.planIntegrity).toBe(first.planIntegrity);
     expect(changed.planIntegrity).not.toBe(first.planIntegrity);
   });
+
+  it("blocks current-session cron jobs because apply has no caller session", async () => {
+    const { source, workspace } = await createPlanSource();
+    const manifest = requireManifest();
+    manifest.cronJobs[0] = { ...manifest.cronJobs[0], session: "current" };
+
+    const plan = await buildClawAddPlan({ manifest, source, context: { workspace } });
+
+    expect(plan.blockers).toContainEqual(
+      expect.objectContaining({
+        code: "cron_current_session_unavailable",
+        path: "$.cronJobs.weekday-triage.session",
+      }),
+    );
+    expect(plan.actions).toContainEqual(
+      expect.objectContaining({ kind: "cronJob", id: "weekday-triage", blocked: true }),
+    );
+  });
 });

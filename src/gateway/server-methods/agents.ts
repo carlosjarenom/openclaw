@@ -15,6 +15,7 @@ import {
   validateAgentsListParams,
   validateAgentsUpdateParams,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { removeAgentCronJobs } from "../../agents/agent-delete-cron.js";
 import { findOverlappingWorkspaceAgentIds } from "../../agents/agent-delete-safety.js";
 import {
   listAgentIds,
@@ -723,6 +724,8 @@ export const agentsHandlers: GatewayRequestHandlers = {
     }
 
     const deleteFiles = typeof params.deleteFiles === "boolean" ? params.deleteFiles : true;
+    await removeAgentCronJobs(context.cron, agentId);
+
     let committed: Awaited<ReturnType<typeof deleteAgentConfigEntry>>;
     try {
       committed = await deleteAgentConfigEntry({ agentId });

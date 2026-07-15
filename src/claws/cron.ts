@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import {
   openOpenClawStateDatabase,
   runOpenClawStateWriteTransaction,
@@ -36,6 +35,7 @@ type CronRefRow = {
 
 export type ClawCronGateway = {
   add: (input: Record<string, unknown>) => Promise<unknown>;
+  list?: (agentId: string) => Promise<unknown>;
   remove: (schedulerJobId: string) => Promise<unknown>;
 };
 
@@ -48,24 +48,6 @@ export class ClawCronInstallError extends Error {
     super(message);
     this.name = "ClawCronInstallError";
   }
-}
-
-function ensureCronRefTable(db: DatabaseSync): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS claw_cron_refs (
-      agent_id TEXT NOT NULL,
-      manifest_id TEXT NOT NULL,
-      schema_version TEXT NOT NULL,
-      declaration_key TEXT NOT NULL UNIQUE,
-      scheduler_job_id TEXT UNIQUE,
-      status TEXT NOT NULL,
-      job_json TEXT NOT NULL,
-      error TEXT,
-      created_at_ms INTEGER NOT NULL,
-      updated_at_ms INTEGER NOT NULL,
-      PRIMARY KEY (agent_id, manifest_id)
-    );
-  `);
 }
 
 function rowToRef(row: CronRefRow): PersistedClawCronRef {
@@ -89,18 +71,41 @@ function persistPendingRef(
   options: OpenClawStateDatabaseOptions & { nowMs?: number },
 ): PersistedClawCronRef {
   const nowMs = options.nowMs ?? Date.now();
+  const declarationKey = `claw:${plan.agent.finalId}:${job.id}`;
+  const database = openOpenClawStateDatabase(options);
+  const existing = database.db
+    .prepare(
+      `SELECT schema_version, agent_id, manifest_id, declaration_key, scheduler_job_id,
+              status, job_json, error, created_at_ms, updated_at_ms
+         FROM claw_cron_refs
+        WHERE agent_id = ? AND manifest_id = ?`,
+    )
+    .get(plan.agent.finalId, job.id) as CronRefRow | undefined;
+  if (existing) {
+    const ref = rowToRef(existing);
+    if (ref.declarationKey !== declarationKey || JSON.stringify(ref.job) !== JSON.stringify(job)) {
+      throw new ClawCronInstallError(
+        "cron_provenance_conflict",
+        `Cron declaration ${JSON.stringify(job.id)} differs from its pending ownership record.`,
+        [ref],
+      );
+    }
+    if (ref.status === "complete") {
+      return ref;
+    }
+    return updateRef(ref, { status: "pending" }, options);
+  }
   const record: PersistedClawCronRef = {
     schemaVersion: CLAW_CRON_REF_SCHEMA_VERSION,
     agentId: plan.agent.finalId,
     manifestId: job.id,
-    declarationKey: `claw:${plan.agent.finalId}:${job.id}`,
+    declarationKey,
     status: "pending",
     job,
     createdAtMs: nowMs,
     updatedAtMs: nowMs,
   };
   runOpenClawStateWriteTransaction(({ db }) => {
-    ensureCronRefTable(db);
     db.prepare(
       `INSERT INTO claw_cron_refs (
          agent_id, manifest_id, schema_version, declaration_key, scheduler_job_id,
@@ -125,7 +130,7 @@ function persistPendingRef(
 
 function updateRef(
   ref: PersistedClawCronRef,
-  update: { schedulerJobId?: string; status: "complete" | "failed"; error?: string },
+  update: { schedulerJobId?: string; status: PersistedClawCronRef["status"]; error?: string },
   options: OpenClawStateDatabaseOptions & { nowMs?: number },
 ): PersistedClawCronRef {
   const updated = {
@@ -134,7 +139,6 @@ function updateRef(
     updatedAtMs: options.nowMs ?? Date.now(),
   };
   runOpenClawStateWriteTransaction(({ db }) => {
-    ensureCronRefTable(db);
     db.prepare(
       `UPDATE claw_cron_refs
           SET scheduler_job_id = @scheduler_job_id,
@@ -169,6 +173,27 @@ function schedulerJobFromResult(value: unknown): { id: string } | undefined {
   return undefined;
 }
 
+function schedulerJobByDeclarationKey(
+  value: unknown,
+  declarationKey: string,
+): { id: string } | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const jobs = (value as Record<string, unknown>).jobs;
+  if (!Array.isArray(jobs)) {
+    return undefined;
+  }
+  const matches = jobs.filter(
+    (job): job is Record<string, unknown> =>
+      Boolean(job) &&
+      typeof job === "object" &&
+      (job as Record<string, unknown>).declarationKey === declarationKey &&
+      typeof (job as Record<string, unknown>).id === "string",
+  );
+  return matches.length === 1 ? { id: matches[0].id as string } : undefined;
+}
+
 function gatewayInput(plan: ClawAddPlan, ref: PersistedClawCronRef): Record<string, unknown> {
   const job = ref.job;
   return {
@@ -198,7 +223,7 @@ function gatewayInput(plan: ClawAddPlan, ref: PersistedClawCronRef): Record<stri
 export async function installClawCronJobs(
   plan: ClawAddPlan,
   options: OpenClawStateDatabaseOptions & {
-    gateway?: Pick<ClawCronGateway, "add">;
+    gateway?: Pick<ClawCronGateway, "add" | "list">;
     nowMs?: number;
   } = {},
 ): Promise<PersistedClawCronRef[]> {
@@ -233,15 +258,24 @@ export async function installClawCronJobs(
     };
     const pending = persistPendingRef(plan, job, options);
     refs.push(pending);
+    if (pending.status === "complete" && pending.schedulerJobId) {
+      continue;
+    }
     let result: { id: string } | undefined;
     try {
-      result = schedulerJobFromResult(await options.gateway.add(gatewayInput(plan, pending)));
+      if (options.gateway.list) {
+        result = schedulerJobByDeclarationKey(
+          await options.gateway.list(plan.agent.finalId),
+          pending.declarationKey,
+        );
+      }
+      result ??= schedulerJobFromResult(await options.gateway.add(gatewayInput(plan, pending)));
       if (!result) {
         throw new Error("cron.add returned no scheduler job id");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      refs[refs.length - 1] = updateRef(pending, { status: "failed", error: message }, options);
+      refs[refs.length - 1] = updateRef(pending, { status: "pending", error: message }, options);
       throw new ClawCronInstallError("cron_install_failed", message, refs);
     }
     try {
@@ -267,7 +301,6 @@ export function readClawCronRefs(
   options: OpenClawStateDatabaseOptions = {},
 ): PersistedClawCronRef[] {
   const database = openOpenClawStateDatabase(options);
-  ensureCronRefTable(database.db);
   const rows = database.db
     .prepare(
       `SELECT schema_version, agent_id, manifest_id, declaration_key, scheduler_job_id,
@@ -286,7 +319,6 @@ export function deleteClawCronRef(
   options: OpenClawStateDatabaseOptions = {},
 ): void {
   runOpenClawStateWriteTransaction(({ db }) => {
-    ensureCronRefTable(db);
     db.prepare("DELETE FROM claw_cron_refs WHERE agent_id = ? AND manifest_id = ?").run(
       agentId,
       manifestId,

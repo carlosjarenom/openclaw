@@ -306,7 +306,7 @@ describe("Claw status and remove", () => {
     });
   });
 
-  it("removes scheduler-owned cron jobs before agent config", async () => {
+  it("removes scheduler-owned cron jobs after agent config", async () => {
     const current = await addFixture({ withCron: true });
     const plan = await buildClawRemovePlan("worker", {
       env: current.env,
@@ -342,6 +342,36 @@ describe("Claw status and remove", () => {
       cronJobs: [
         { manifestId: "daily-report", schedulerJobId: "scheduler-daily", action: "removed" },
       ],
+    });
+  });
+
+  it("delegates agent and cron teardown to the canonical agent lifecycle", async () => {
+    const current = await addFixture({ withCron: true });
+    const plan = await buildClawRemovePlan("worker", {
+      env: current.env,
+      config: current.getConfig(),
+    });
+    const calls: string[] = [];
+
+    const result = await applyClawRemovePlan(plan, {
+      env: current.env,
+      config: current.getConfig(),
+      deleteAgent: async (agentId) => {
+        calls.push(`agent:${agentId}`);
+      },
+      cronGateway: {
+        remove: async (id) => {
+          calls.push(`cron:${id}`);
+          return { ok: true };
+        },
+      },
+    });
+
+    expect(calls).toEqual(["cron:scheduler-daily", "agent:worker"]);
+    expect(result).toMatchObject({
+      status: "complete",
+      agentRemoved: true,
+      cronJobs: [{ manifestId: "daily-report", action: "removed" }],
     });
   });
 

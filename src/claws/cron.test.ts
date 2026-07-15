@@ -94,7 +94,7 @@ describe("installClawCronJobs", () => {
     expect(refs[0]).toMatchObject({ schedulerJobId: "existing-1", status: "complete" });
   });
 
-  it("persists a failed reference when cron.add fails", async () => {
+  it("preserves an ambiguous pending reference when cron.add fails", async () => {
     const current = await fixture();
 
     await expect(
@@ -104,10 +104,45 @@ describe("installClawCronJobs", () => {
       }),
     ).rejects.toMatchObject({
       code: "cron_install_failed",
-      cronJobs: [{ manifestId: "daily-report", status: "failed", error: "gateway unavailable" }],
+      cronJobs: [{ manifestId: "daily-report", status: "pending", error: "gateway unavailable" }],
     });
     expect(readClawCronRefs("worker-two", { env: current.env })).toMatchObject([
-      { manifestId: "daily-report", status: "failed", error: "gateway unavailable" },
+      { manifestId: "daily-report", status: "pending", error: "gateway unavailable" },
+    ]);
+  });
+
+  it("reconciles a response-lost retry by declaration key", async () => {
+    const current = await fixture();
+    const add = vi.fn().mockRejectedValue(new Error("response lost"));
+
+    await expect(
+      installClawCronJobs(current.plan, {
+        env: current.env,
+        gateway: { add },
+      }),
+    ).rejects.toMatchObject({
+      code: "cron_install_failed",
+      cronJobs: [{ status: "pending" }],
+    });
+
+    const refs = await installClawCronJobs(current.plan, {
+      env: current.env,
+      gateway: {
+        add,
+        list: vi.fn().mockResolvedValue({
+          jobs: [
+            {
+              id: "scheduler-after-lost-response",
+              declarationKey: "claw:worker-two:daily-report",
+            },
+          ],
+        }),
+      },
+    });
+
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(refs).toMatchObject([
+      { schedulerJobId: "scheduler-after-lost-response", status: "complete" },
     ]);
   });
 });

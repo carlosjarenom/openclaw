@@ -46,7 +46,7 @@ type ClawAddApplyOptions = OpenClawStateDatabaseOptions & {
   runtime?: RuntimeEnv;
   installPackages?: typeof installClawPackages;
   installCronJobs?: typeof installClawCronJobs;
-  cronGateway?: Pick<ClawCronGateway, "add">;
+  cronGateway?: Pick<ClawCronGateway, "add" | "list">;
   nowMs?: number;
 };
 type AgentConfig = NonNullable<NonNullable<OpenClawConfig["agents"]>["list"]>[number];

@@ -430,6 +430,16 @@ export async function buildClawAddPlan(params: {
   }
 
   for (const job of params.manifest.cronJobs) {
+    const blocked = job.session === "current";
+    if (blocked) {
+      blockers.push(
+        blocker(
+          "cron_current_session_unavailable",
+          `$.cronJobs.${job.id}.session`,
+          'Claw apply has no caller session; use "main" or "isolated".',
+        ),
+      );
+    }
     actions.push({
       kind: "cronJob",
       id: job.id,
