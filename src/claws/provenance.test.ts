@@ -583,7 +583,7 @@ describe("applyClawAddPlan", () => {
       cronJobs: [
         {
           id: "daily-report",
-          schedule: { cron: "0 9 * * *" },
+          schedule: { cron: "0 9 * * *", timezone: "UTC" },
           session: "isolated",
           message: "Prepare report",
         },
@@ -597,7 +597,7 @@ describe("applyClawAddPlan", () => {
       status: "failed" as const,
       job: {
         id: "daily-report",
-        schedule: { cron: "0 9 * * *" },
+        schedule: { cron: "0 9 * * *", timezone: "UTC" },
         session: "isolated" as const,
         message: "Prepare report",
       },
@@ -607,6 +607,7 @@ describe("applyClawAddPlan", () => {
     };
 
     const result = await applyClawAddPlan(plan, {
+      consentPlanIntegrity: plan.planIntegrity,
       env: stateEnv(root),
       commitConfig: async (transform) => {
         transform({});

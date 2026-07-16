@@ -39,7 +39,7 @@ async function fixture(
       ? [
           {
             id: "daily-report",
-            schedule: { cron: "0 9 * * *" },
+            schedule: { cron: "0 9 * * *", timezone: "UTC" },
             session: "isolated",
             message: "Prepare report",
           },
@@ -307,7 +307,7 @@ describe("Claw status and remove", () => {
     });
   });
 
-  it("removes scheduler-owned cron jobs after agent config", async () => {
+  it("removes scheduler-owned cron jobs before agent config", async () => {
     const current = await addFixture({ withCron: true });
     const plan = await buildClawRemovePlan("worker", {
       env: current.env,
@@ -324,6 +324,7 @@ describe("Claw status and remove", () => {
     let config = current.getConfig();
     const order: string[] = [];
     const result = await applyClawRemovePlan(plan, {
+      consentPlanIntegrity: plan.planIntegrity,
       env: current.env,
       config,
       cronGateway: {
@@ -355,6 +356,7 @@ describe("Claw status and remove", () => {
     const calls: string[] = [];
 
     const result = await applyClawRemovePlan(plan, {
+      consentPlanIntegrity: plan.planIntegrity,
       env: current.env,
       config: current.getConfig(),
       deleteAgent: async (agentId) => {
@@ -376,6 +378,37 @@ describe("Claw status and remove", () => {
     });
   });
 
+  it("retains the agent when recurring work cannot be disabled", async () => {
+    const current = await addFixture({ withCron: true });
+    const plan = await buildClawRemovePlan("worker", {
+      env: current.env,
+      config: current.getConfig(),
+    });
+    const deletedAgents: string[] = [];
+
+    const result = await applyClawRemovePlan(plan, {
+      consentPlanIntegrity: plan.planIntegrity,
+      env: current.env,
+      config: current.getConfig(),
+      deleteAgent: async (agentId) => {
+        deletedAgents.push(agentId);
+      },
+      cronGateway: {
+        remove: async () => {
+          throw new Error("scheduler unavailable");
+        },
+      },
+    });
+
+    expect(deletedAgents).toEqual([]);
+    expect(result).toMatchObject({
+      status: "partial",
+      agentRemoved: false,
+      error: { code: "cron_cleanup_failed", message: "scheduler unavailable" },
+      cronJobs: [{ manifestId: "daily-report", action: "error" }],
+    });
+  });
+
   it("finishes local cleanup without repeating a confirmed remote cron removal", async () => {
     const current = await addFixture({ withCron: true });
     markClawCronRefRemoved("worker", "daily-report", { env: current.env });
@@ -387,6 +420,7 @@ describe("Claw status and remove", () => {
     const remoteRemovals: string[] = [];
 
     const result = await applyClawRemovePlan(plan, {
+      consentPlanIntegrity: plan.planIntegrity,
       env: current.env,
       config,
       commitConfig: async (transform) => {
