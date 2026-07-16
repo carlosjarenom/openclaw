@@ -139,6 +139,7 @@ function partialResult(params: {
   configCommitted: boolean;
   workspaceFiles?: PersistedClawWorkspaceFile[];
   packages?: PersistedClawPackageRef[];
+  installStatus?: ClawInstallStatus;
   error: ClawAddResult["error"];
   nowMs?: number;
 }): ClawAddResult {
@@ -157,7 +158,7 @@ function partialResult(params: {
     packages: params.packages ?? [],
     installRecord: {
       ...params.installRecord,
-      status: "partial",
+      status: params.installStatus ?? "partial",
       updatedAtMs: params.nowMs ?? Date.now(),
     },
     error: params.error,
@@ -355,11 +356,14 @@ export async function applyClawAddPlan(
       options,
     );
   } catch (error) {
+    let installStatus: ClawInstallStatus = "workspace_ready";
     if (!configCommitted) {
       const removedWorkspace = await rmdir(workspace)
         .then(() => true)
         .catch(() => false);
       if (removedWorkspace) {
+        workspaceCreated = false;
+        installStatus = "partial";
         markInstallStatus(
           plan.agent.finalId,
           "partial",
@@ -368,7 +372,19 @@ export async function applyClawAddPlan(
         );
       }
     }
-    throw error;
+    return partialResult({
+      plan,
+      installRecord,
+      workspaceCreated,
+      configCommitted,
+      packages,
+      installStatus,
+      error: {
+        code: error instanceof ClawAddMutationError ? error.code : "config_commit_failed",
+        message: error instanceof Error ? error.message : String(error),
+      },
+      nowMs: options.nowMs,
+    });
   }
 
   const createFiles = options.createWorkspaceFiles ?? createClawWorkspaceFiles;

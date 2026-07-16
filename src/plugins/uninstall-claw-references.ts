@@ -23,9 +23,10 @@ export function collectClawPluginUninstallWarnings(params: {
   if (!installRecord || installRecord.source !== "clawhub") {
     return [];
   }
-  const refs = readClawPackageRefs({ kind: "plugin", source: "clawhub" }).filter((ref) =>
-    clawPackageRefMatchesPluginInstall(ref, params.pluginId, installRecord),
-  );
+  const refs = readClawPackageRefs({
+    kind: "plugin",
+    source: "clawhub",
+  }).filter((ref) => clawPackageRefMatchesPluginInstall(ref, params.pluginId, installRecord));
   const clawIds = [...new Set(refs.map((ref) => ref.clawName))].toSorted();
   if (clawIds.length === 0) {
     return [];

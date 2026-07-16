@@ -1927,5 +1927,6 @@ CREATE TABLE IF NOT EXISTS claw_package_refs (
   package_status TEXT NOT NULL,
   ownership TEXT NOT NULL,
   installed_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
   PRIMARY KEY (agent_id, package_kind, package_source, package_ref, package_version)
 ) STRICT;\n`;

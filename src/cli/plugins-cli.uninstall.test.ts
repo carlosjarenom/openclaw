@@ -203,7 +203,7 @@ describe("plugins cli uninstall", () => {
     });
   });
 
-  it("warns but proceeds when a shared plugin is referenced by a Claw", async () => {
+  it("warns but proceeds when a shared plugin has an uncertain Claw reference", async () => {
     const previousStateDir = process.env.OPENCLAW_STATE_DIR;
     process.env.OPENCLAW_STATE_DIR = mkdtempSync(join(tmpdir(), "openclaw-claw-plugin-ref-"));
     closeOpenClawStateDatabaseForTest();
@@ -249,6 +249,7 @@ describe("plugins cli uninstall", () => {
           claw: { name: "@owner/audit-claw" },
         } as ClawAddPlan,
         { kind: "plugin", source: "clawhub", ref: "@owner/audit", version: "2.0.1" },
+        { status: "failed" },
       );
 
       await runPluginsCommand(["plugins", "uninstall", "alpha", "--force", "--keep-files"]);

@@ -365,7 +365,15 @@ export async function buildClawAddPlan(params: {
       id: `${pkg.kind}:${pkg.ref}`,
       action: "install",
       target: `${pkg.source}:${pkg.ref}@${pkg.version}`,
-      details: { ...pkg },
+      details: {
+        ...pkg,
+        expectedState: !preflight.ok
+          ? "unresolved"
+          : preflight.action === "reuse"
+            ? "present-exact"
+            : "absent",
+        ownerAction: preflight.action,
+      },
       blocked: !preflight.ok,
       ...(diagnostic ? { reason: diagnostic.message } : {}),
     });
