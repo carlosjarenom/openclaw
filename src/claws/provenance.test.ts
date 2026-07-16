@@ -1,13 +1,16 @@
 // Tests root Claw install ownership and the narrow agent/workspace mutation slice.
-import { access, mkdtemp } from "node:fs/promises";
+import { access, mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import {
+  closeOpenClawStateDatabaseForTest,
+  openOpenClawStateDatabase,
+} from "../state/openclaw-state-db.js";
 import { applyClawAddPlan, ClawAddMutationError } from "./add.js";
 import { buildClawAddPlan } from "./lifecycle.js";
-import { persistClawInstallRecord, readClawInstallRecord } from "./provenance.js";
+import { persistClawInstallRecord } from "./provenance.js";
 import { parseClawManifest } from "./schema.js";
 import type { ClawSourceIdentity } from "./types.js";
 
@@ -27,7 +30,9 @@ async function makePlan(manifestValue: unknown = { schemaVersion: 1, agent: { id
     version: "1.0.0",
     packageRoot: root,
     manifestPath: join(root, "openclaw.claw.json"),
+    integrityKind: "artifact",
     integrity: "sha256:manifest",
+    byteLength: 123,
   };
   const plan = await buildClawAddPlan({
     manifest: parsed.manifest,
@@ -41,6 +46,31 @@ function stateEnv(root: string) {
   return { OPENCLAW_STATE_DIR: join(root, "state") };
 }
 
+function readInstallRow(agentId: string, root: string) {
+  return openOpenClawStateDatabase({ env: stateEnv(root) })
+    .db.prepare(
+      `SELECT agent_id, schema_version, claw_name, claw_version, integrity, plan_integrity,
+              workspace, agent_config_digest, agent_owned_paths_json, status, added_at_ms
+         FROM claw_installs
+        WHERE agent_id = ?`,
+    )
+    .get(agentId) as
+    | {
+        agent_id: string;
+        schema_version: string;
+        claw_name: string;
+        claw_version: string;
+        integrity: string;
+        plan_integrity: string;
+        workspace: string;
+        agent_config_digest: string;
+        agent_owned_paths_json: string;
+        status: string;
+        added_at_ms: number | bigint;
+      }
+    | undefined;
+}
+
 describe("Claw root install provenance", () => {
   it("persists package identity, agent ownership, workspace, and config digest", async () => {
     const { root, plan } = await makePlan();
@@ -50,13 +80,28 @@ describe("Claw root install provenance", () => {
     expect(record).toMatchObject({
       schemaVersion: "openclaw.clawInstallRecord.v1",
       claw: { name: "@acme/worker", version: "1.0.0", integrity: "sha256:manifest" },
+      manifestSchemaVersion: 1,
+      planIntegrity: plan.planIntegrity,
       agentId: "worker",
       workspace: plan.agent.workspace,
+      agentOwnedPaths: ['agents.list["worker"]'],
       status: "complete",
       addedAtMs: 42,
     });
     expect(record.agentConfigDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
-    expect(readClawInstallRecord("worker", { env: stateEnv(root) })).toEqual(record);
+    expect(readInstallRow("worker", root)).toMatchObject({
+      agent_id: record.agentId,
+      schema_version: record.schemaVersion,
+      claw_name: record.claw.name,
+      claw_version: record.claw.version,
+      integrity: record.claw.integrity,
+      plan_integrity: record.planIntegrity,
+      workspace: record.workspace,
+      agent_config_digest: record.agentConfigDigest,
+      agent_owned_paths_json: JSON.stringify(record.agentOwnedPaths),
+      status: record.status,
+      added_at_ms: record.addedAtMs,
+    });
   });
 
   it("does not overwrite an existing install record for the same agent", async () => {
@@ -64,7 +109,7 @@ describe("Claw root install provenance", () => {
     persistClawInstallRecord(plan, { env: stateEnv(root), nowMs: 1 });
 
     expect(() => persistClawInstallRecord(plan, { env: stateEnv(root), nowMs: 2 })).toThrow();
-    expect(readClawInstallRecord("worker", { env: stateEnv(root) })?.addedAtMs).toBe(1);
+    expect(Number(readInstallRow("worker", root)?.added_at_ms)).toBe(1);
   });
 });
 
@@ -87,6 +132,7 @@ describe("applyClawAddPlan", () => {
     };
 
     const result = await applyClawAddPlan(plan, {
+      consentPlanIntegrity: plan.planIntegrity,
       env: stateEnv(root),
       nowMs: 10,
       commitConfig: async (transform) => {
@@ -121,12 +167,26 @@ describe("applyClawAddPlan", () => {
 
     await expect(
       applyClawAddPlan(plan, {
+        consentPlanIntegrity: plan.planIntegrity,
         commitConfig: async (transform) => {
           transform({ agents: { list: [{ id: "worker" }] } });
         },
       }),
     ).rejects.toMatchObject({ code: "agent_id_collision" });
     await expect(access(plan.agent.workspace)).rejects.toThrow();
+  });
+
+  it("records a partial add when the workspace appears after planning", async () => {
+    const { root, plan } = await makePlan();
+    await mkdir(plan.agent.workspace);
+
+    await expect(
+      applyClawAddPlan(plan, {
+        consentPlanIntegrity: plan.planIntegrity,
+        env: stateEnv(root),
+      }),
+    ).rejects.toMatchObject({ code: "workspace_collision" });
+    expect(readInstallRow("worker", root)?.status).toBe("partial");
   });
 
   it("blocks declared components that this lifecycle slice cannot yet create", async () => {
@@ -136,7 +196,9 @@ describe("applyClawAddPlan", () => {
       packages: [{ kind: "skill", source: "clawhub", ref: "demo", version: "1.0.0" }],
     });
 
-    await expect(applyClawAddPlan(plan)).rejects.toEqual(
+    await expect(
+      applyClawAddPlan(plan, { consentPlanIntegrity: plan.planIntegrity }),
+    ).rejects.toEqual(
       expect.objectContaining<Partial<ClawAddMutationError>>({ code: "plan_blocked" }),
     );
     await expect(access(plan.agent.workspace)).rejects.toThrow();
@@ -148,6 +210,7 @@ describe("applyClawAddPlan", () => {
 
     await expect(
       applyClawAddPlan(plan, {
+        consentPlanIntegrity: plan.planIntegrity,
         commitConfig: async (transform) => {
           config = transform(config);
         },
@@ -157,5 +220,14 @@ describe("applyClawAddPlan", () => {
       }),
     ).rejects.toMatchObject({ code: "provenance_failed" });
     expect(config.agents?.list).toBeUndefined();
+  });
+
+  it("rejects mutation when consent does not bind the current plan", async () => {
+    const { plan } = await makePlan();
+
+    await expect(
+      applyClawAddPlan(plan, { consentPlanIntegrity: "sha256:stale" }),
+    ).rejects.toMatchObject({ code: "plan_integrity_mismatch" });
+    await expect(access(plan.agent.workspace)).rejects.toThrow();
   });
 });

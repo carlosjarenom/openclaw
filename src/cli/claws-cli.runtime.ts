@@ -50,17 +50,23 @@ function logClawAddPlanSummary(plan: ClawAddPlan, runtime: RuntimeEnv): void {
 }
 
 function failNonDryRun(opts: ClawsAddOptions, runtime: RuntimeEnv): boolean {
-  if (opts.dryRun || opts.yes) {
+  if (opts.dryRun) {
     return false;
   }
-  const message =
-    "Claw add requires explicit consent; pass --dry-run to preview or --yes to create the new agent and workspace.";
+  const consented = opts.yes && opts.planIntegrity;
+  if (consented) {
+    return false;
+  }
+  const code = opts.yes ? "plan_integrity_required" : "consent_required";
+  const message = opts.yes
+    ? "Claw add consent must include --plan-integrity from the exact dry-run plan."
+    : "Claw add requires explicit consent; pass --dry-run to preview or --yes with --plan-integrity to create the new agent and workspace.";
   if (opts.json) {
     writeRuntimeJson(runtime, {
       schemaVersion: CLAW_ADD_PLAN_SCHEMA_VERSION,
       stability: CLAW_OUTPUT_STABILITY,
       ok: false,
-      error: { code: "consent_required", message },
+      error: { code, message },
     });
   } else {
     runtime.error(message);
@@ -180,9 +186,26 @@ export async function runClawsAddCommand(
     return;
   }
 
+  if (opts.planIntegrity !== plan.planIntegrity) {
+    const message = "The consented Claw plan no longer matches; run add --dry-run again.";
+    if (opts.json) {
+      writeRuntimeJson(runtime, {
+        schemaVersion: CLAW_ADD_RESULT_SCHEMA_VERSION,
+        stability: CLAW_OUTPUT_STABILITY,
+        status: "failed",
+        planIntegrity: plan.planIntegrity,
+        error: { code: "plan_integrity_mismatch", message },
+      });
+    } else {
+      runtime.error(message);
+    }
+    runtime.exit(1);
+    return;
+  }
+
   let addResult;
   try {
-    addResult = await applyClawAddPlan(plan);
+    addResult = await applyClawAddPlan(plan, { consentPlanIntegrity: opts.planIntegrity });
   } catch (error) {
     const code = error instanceof ClawAddMutationError ? error.code : "add_failed";
     const message = (error as Error).message;

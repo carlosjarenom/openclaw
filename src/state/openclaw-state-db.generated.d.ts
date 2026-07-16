@@ -237,13 +237,18 @@ export interface ChannelPairingRequests {
 export interface ClawInstalls {
   added_at_ms: number;
   agent_config_digest: string;
-  agent_id: string | null;
+  agent_id: string;
+  agent_owned_paths_json: string;
   claw_name: string;
   claw_version: string;
   integrity: string;
+  integrity_kind: string;
   manifest_path: string;
+  manifest_schema_version: number;
   package_root: string;
+  plan_integrity: string;
   schema_version: string;
+  source_byte_length: number;
   source_kind: string;
   status: string;
   updated_at_ms: number;
