@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { installClawPackages } from "./packages.js";
-import type { ClawPackageRefStatus, PersistedClawPackageRef } from "./provenance.js";
+import type { PersistedClawPackageRef } from "./provenance.js";
 import type { ClawAddPlan, ClawPackage } from "./types.js";
 
 function plan(packages: ClawPackage[], ownerAction: "install" | "reuse" = "install"): ClawAddPlan {
@@ -45,10 +45,12 @@ function plan(packages: ClawPackage[], ownerAction: "install" | "reuse" = "insta
   };
 }
 
-const completePackageRef = vi.fn((ref: PersistedClawPackageRef, status: ClawPackageRefStatus) => ({
-  ...ref,
-  status,
-}));
+const completePackageRef = vi.fn(
+  (ref: PersistedClawPackageRef, status: PersistedClawPackageRef["status"]) => ({
+    ...ref,
+    status,
+  }),
+);
 
 describe("installClawPackages", () => {
   it("installs skills into the created agent workspace at the pinned version", async () => {

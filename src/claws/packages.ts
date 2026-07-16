@@ -63,7 +63,7 @@ function installerRuntime(runtime: RuntimeEnv): RuntimeEnv {
   };
 }
 
-export type ClawPackagePreflightResult =
+type ClawPackagePreflightResult =
   | { ok: true; action: "install" | "reuse" }
   | { ok: false; code: string; message: string };
 

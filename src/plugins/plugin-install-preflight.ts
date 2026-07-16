@@ -5,7 +5,7 @@ import {
 import { parseClawHubPluginSpec } from "../infra/clawhub-spec.js";
 import { loadInstalledPluginIndexInstallRecords } from "./installed-plugin-index-records.js";
 
-export type PluginInstallPreflightResult =
+type PluginInstallPreflightResult =
   | { ok: true; action: "install"; request: PluginInstallRequestContext }
   | {
       ok: true;

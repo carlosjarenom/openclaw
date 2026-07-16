@@ -962,7 +962,11 @@ describe("plugin management service", () => {
       )[0].nextConfig.plugins?.installs,
     ).toBeUndefined();
     expect(mocks.applyUninstall).toHaveBeenCalledWith({ target: "/tmp/extensions/diffs" });
-    expect(mocks.clawReferenceWarnings).toHaveBeenCalledWith({ pluginId: "diffs", installRecord });
+    expect(mocks.clawReferenceWarnings).toHaveBeenCalledWith({
+      pluginId: "diffs",
+      installRecord,
+      env: {},
+    });
     expect(mocks.refreshRegistry).toHaveBeenCalledWith(
       expect.objectContaining({ reason: "source-changed", installRecords: {} }),
     );

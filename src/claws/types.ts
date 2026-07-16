@@ -76,7 +76,7 @@ type ClawWorkspace = {
   files: ClawWorkspaceFile[];
 };
 
-type ClawPackage = {
+export type ClawPackage = {
   kind: "skill" | "plugin";
   source: "clawhub";
   ref: string;

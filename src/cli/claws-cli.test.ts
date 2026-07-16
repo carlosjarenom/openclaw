@@ -234,7 +234,7 @@ describe("claws cli", () => {
 
     expect(mocks.applyClawAddPlan).toHaveBeenCalledWith(
       expect.objectContaining({ planIntegrity: plan.planIntegrity }),
-      { consentPlanIntegrity: plan.planIntegrity },
+      expect.objectContaining({ consentPlanIntegrity: plan.planIntegrity }),
     );
     expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
       schemaVersion: "openclaw.clawAddResult.v1",

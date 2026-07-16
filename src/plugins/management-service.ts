@@ -962,6 +962,7 @@ export async function uninstallManagedPlugin(params: {
       ...collectClawPluginUninstallWarnings({
         pluginId,
         installRecord: installRecords[pluginId],
+        env,
       }),
       ...directoryResult.warnings,
     ];

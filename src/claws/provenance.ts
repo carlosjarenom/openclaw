@@ -266,10 +266,9 @@ export function deleteClawInstallRecord(
   }, options);
 }
 
-
-export const CLAW_PACKAGE_REF_SCHEMA_VERSION = "openclaw.clawPackageRef.v1" as const;
-export type ClawPackageRefStatus = "pending" | "complete" | "failed";
-export type ClawPackageOwnership = "claw-installed" | "independently-owned";
+const CLAW_PACKAGE_REF_SCHEMA_VERSION = "openclaw.clawPackageRef.v1" as const;
+type ClawPackageRefStatus = "pending" | "complete" | "failed";
+type ClawPackageOwnership = "claw-installed" | "independently-owned";
 
 export type PersistedClawPackageRef = {
   schemaVersion: typeof CLAW_PACKAGE_REF_SCHEMA_VERSION;
@@ -422,8 +421,8 @@ export function readClawPackageRefs(
   }
   const where = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
   const rows = database.db
-    // sqlite-allow-raw: read-only Claw package reference lookup with closed column filters.
     .prepare(
+      /* sqlite-allow-raw: read-only Claw package reference lookup with closed column filters. */
       `SELECT schema_version, agent_id, claw_name, package_kind, package_source,
               package_ref, package_version, package_status, ownership, installed_at_ms,
               updated_at_ms
