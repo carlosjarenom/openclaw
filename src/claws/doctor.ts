@@ -1,5 +1,6 @@
 // Claw doctor diagnostics project the lifecycle ownership ledger into health findings.
 import type { DatabaseSync } from "node:sqlite";
+import { listConfiguredMcpServers } from "../config/mcp-config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { HealthFinding } from "../flows/health-checks.js";
 import {
@@ -14,6 +15,8 @@ const CLAW_STATE_CHECK_ID = "core/doctor/claws-state";
 
 export type ClawDoctorOptions = OpenClawStateDatabaseOptions & {
   cfg?: OpenClawConfig;
+  sourceMcpServers?: Record<string, Record<string, unknown>>;
+  listMcpServers?: typeof listConfiguredMcpServers;
 };
 
 function finding(params: {
@@ -76,6 +79,21 @@ function collectInstallFindings(record: ClawStatusRecord): HealthFinding[] {
         target: `${file.workspace}:${file.path}`,
         requirement: "Claw-managed workspace files should remain inspectable with recorded content",
         fixHint: "Keep intentional local edits, or inspect the file before removing the Claw.",
+      }),
+    );
+  }
+  for (const pkg of record.packages) {
+    if (pkg.state === "present") {
+      continue;
+    }
+    findings.push(
+      finding({
+        message: `Claw ${pkg.kind} ${JSON.stringify(`${pkg.ref}@${pkg.version}`)} has ${pkg.state} lifecycle state.`,
+        path: `claws.${agentId}.packages.${pkg.kind}.${pkg.ref}`,
+        target: `${pkg.source}:${pkg.ref}@${pkg.version}`,
+        requirement: "Claw package references should match canonical installed package state",
+        fixHint:
+          "Inspect package state with `openclaw claws status` before updating or removing the Claw.",
       }),
     );
   }
@@ -159,11 +177,23 @@ export async function collectClawStateHealthFindings(
     return [];
   }
   try {
+    if (!tableExists(database.db, "claw_installs")) {
+      return [];
+    }
+    let sourceMcpServers = options.sourceMcpServers;
+    if (!sourceMcpServers) {
+      const listed = await (options.listMcpServers ?? listConfiguredMcpServers)();
+      if (!listed.ok) {
+        throw new Error(listed.error);
+      }
+      sourceMcpServers = listed.mcpServers;
+    }
     const status = await readClawStatus(undefined, {
       ...options,
       database,
       readOnly: true,
       ...(options.cfg ? { config: options.cfg } : {}),
+      sourceMcpServers,
     });
     const findings = status.records.flatMap(collectInstallFindings);
     for (const agentId of orphanedAgentIds({ ...options, database, readOnly: true })) {

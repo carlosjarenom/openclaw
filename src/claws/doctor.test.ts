@@ -1,8 +1,9 @@
-import { access, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import type { McpServerConfig } from "../config/types.mcp.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
@@ -17,6 +18,10 @@ import type { ClawSourceIdentity } from "./types.js";
 
 afterEach(() => closeOpenClawStateDatabaseForTest());
 
+function snapshotMcpServers(config: OpenClawConfig): Record<string, Record<string, unknown>> {
+  return structuredClone(config.mcp?.servers ?? {}) as Record<string, Record<string, unknown>>;
+}
+
 async function fixture(params: { withFile?: boolean; withMcp?: boolean; withCron?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "openclaw-claw-doctor-"));
   if (params.withFile) {
@@ -26,12 +31,20 @@ async function fixture(params: { withFile?: boolean; withMcp?: boolean; withCron
     schemaVersion: 1,
     agent: { id: "worker", name: "Worker" },
     workspace: params.withFile ? { bootstrapFiles: { "SOUL.md": { source: "SOUL.md" } } } : {},
-    mcpServers: params.withMcp ? { docs: { command: "uvx", args: ["docs-mcp"] } } : {},
+    mcpServers: params.withMcp
+      ? {
+          docs: {
+            command: "uvx",
+            args: ["docs-mcp"],
+            env: { DOCS_TOKEN: "${DOCS_TOKEN}" },
+          },
+        }
+      : {},
     cronJobs: params.withCron
       ? [
           {
             id: "daily-report",
-            schedule: { cron: "0 9 * * *" },
+            schedule: { cron: "0 9 * * *", timezone: "UTC" },
             session: "isolated",
             message: "Prepare report",
           },
@@ -47,7 +60,9 @@ async function fixture(params: { withFile?: boolean; withMcp?: boolean; withCron
     version: "1.0.0",
     packageRoot: root,
     manifestPath: join(root, "openclaw.claw.json"),
+    integrityKind: "artifact",
     integrity: "sha256:manifest",
+    byteLength: 100,
   };
   const plan = await buildClawAddPlan({
     manifest: parsed.manifest,
@@ -67,6 +82,7 @@ async function installFixture(
   const current = await fixture(params);
   let config: OpenClawConfig = {};
   await applyClawAddPlan(current.plan, {
+    consentPlanIntegrity: current.plan.planIntegrity,
     env: current.env,
     commitConfig: async (transform) => {
       config = transform(config);
@@ -75,8 +91,9 @@ async function installFixture(
       await installClawMcpServers(plan, {
         ...options,
         setMcpServer: async ({ name, server }) => {
-          config.mcp = { ...config.mcp, servers: { ...config.mcp?.servers, [name]: server } };
-          return { ok: true, path: "config", config, mcpServers: config.mcp.servers! };
+          const servers = { ...config.mcp?.servers, [name]: server as McpServerConfig };
+          config.mcp = { ...config.mcp, servers };
+          return { ok: true, path: "config", config, mcpServers: servers };
         },
       }),
     cronGateway: { add: async () => ({ id: "scheduler-daily" }) },
@@ -95,6 +112,25 @@ describe("collectClawStateHealthFindings", () => {
     await expect(access(databasePath)).rejects.toThrow();
   });
 
+  it("treats a pre-Claws state database as empty without modifying it", async () => {
+    const current = await fixture();
+    const databasePath = resolveOpenClawStateSqlitePath(current.env);
+    await mkdir(dirname(databasePath), { recursive: true });
+    const database = new DatabaseSync(databasePath);
+    database.exec("CREATE TABLE unrelated_state (id TEXT PRIMARY KEY)");
+    database.close();
+    const before = await readFile(databasePath);
+
+    await expect(
+      collectClawStateHealthFindings({
+        env: current.env,
+        cfg: {},
+        sourceMcpServers: {},
+      }),
+    ).resolves.toEqual([]);
+    await expect(readFile(databasePath)).resolves.toEqual(before);
+  });
+
   it("does not change existing database bytes, metadata, schema, or journal mode", async () => {
     const current = await installFixture({ withMcp: true, withCron: true });
     closeOpenClawStateDatabaseForTest();
@@ -109,7 +145,11 @@ describe("collectClawStateHealthFindings", () => {
     const beforeJournal = beforeDb.prepare("PRAGMA journal_mode").get();
     beforeDb.close();
 
-    await collectClawStateHealthFindings({ env: current.env, cfg: current.getConfig() });
+    await collectClawStateHealthFindings({
+      env: current.env,
+      cfg: current.getConfig(),
+      sourceMcpServers: snapshotMcpServers(current.getConfig()),
+    });
 
     const afterStat = await stat(databasePath);
     const afterDb = new DatabaseSync(databasePath, { readOnly: true });
@@ -137,8 +177,47 @@ describe("collectClawStateHealthFindings", () => {
   it("reports no findings for a complete unchanged install", async () => {
     const current = await installFixture({ withFile: true, withMcp: true, withCron: true });
     await expect(
-      collectClawStateHealthFindings({ env: current.env, cfg: current.getConfig() }),
+      collectClawStateHealthFindings({
+        env: current.env,
+        cfg: current.getConfig(),
+        sourceMcpServers: snapshotMcpServers(current.getConfig()),
+      }),
     ).resolves.toEqual([]);
+  });
+
+  it("uses source MCP placeholders instead of resolved secret values", async () => {
+    const current = await installFixture({ withMcp: true });
+    const sourceMcpServers = structuredClone(current.getConfig().mcp?.servers ?? {});
+    current.getConfig().mcp!.servers!.docs!.env = { DOCS_TOKEN: "resolved-secret" };
+
+    await expect(
+      collectClawStateHealthFindings({
+        env: current.env,
+        cfg: current.getConfig(),
+        sourceMcpServers,
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it("reports incomplete package lifecycle state", async () => {
+    const current = await installFixture();
+    persistClawPackageRef(
+      current.plan,
+      { kind: "plugin", source: "clawhub", ref: "audit", version: "2.0.0" },
+      { env: current.env, status: "pending" },
+    );
+
+    const findings = await collectClawStateHealthFindings({
+      env: current.env,
+      cfg: current.getConfig(),
+      sourceMcpServers: snapshotMcpServers(current.getConfig()),
+    });
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("incomplete lifecycle state"),
+        path: "claws.worker.packages.plugin.audit",
+      }),
+    );
   });
 
   it("projects agent and workspace drift from lifecycle status", async () => {
@@ -152,6 +231,7 @@ describe("collectClawStateHealthFindings", () => {
     const findings = await collectClawStateHealthFindings({
       env: current.env,
       cfg: current.getConfig(),
+      sourceMcpServers: snapshotMcpServers(current.getConfig()),
     });
     expect(findings).toEqual(
       expect.arrayContaining([
@@ -177,6 +257,7 @@ describe("collectClawStateHealthFindings", () => {
     const findings = await collectClawStateHealthFindings({
       env: current.env,
       cfg: current.getConfig(),
+      sourceMcpServers: snapshotMcpServers(current.getConfig()),
     });
     expect(findings).toEqual(
       expect.arrayContaining([
@@ -193,6 +274,7 @@ describe("collectClawStateHealthFindings", () => {
     const current = await fixture({ withCron: true });
     let config: OpenClawConfig = {};
     await applyClawAddPlan(current.plan, {
+      consentPlanIntegrity: current.plan.planIntegrity,
       env: current.env,
       commitConfig: async (transform) => {
         config = transform(config);
@@ -208,7 +290,11 @@ describe("collectClawStateHealthFindings", () => {
         }),
     });
 
-    const findings = await collectClawStateHealthFindings({ env: current.env, cfg: config });
+    const findings = await collectClawStateHealthFindings({
+      env: current.env,
+      cfg: config,
+      sourceMcpServers: snapshotMcpServers(config),
+    });
     expect(findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ message: expect.stringContaining("partial install record") }),
@@ -228,7 +314,11 @@ describe("collectClawStateHealthFindings", () => {
       { env: current.env },
     );
 
-    const findings = await collectClawStateHealthFindings({ env: current.env, cfg: {} });
+    const findings = await collectClawStateHealthFindings({
+      env: current.env,
+      cfg: {},
+      sourceMcpServers: {},
+    });
     expect(findings).toEqual([
       expect.objectContaining({
         message: expect.stringContaining("have no root install record"),

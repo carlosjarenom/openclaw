@@ -1171,8 +1171,16 @@ function createConvertedWorkflowChecks(
             defaultEnabled: false as const,
             source: "doctor",
             async detect(ctx: HealthCheckContext) {
-              const { collectClawStateHealthFindings } = await import("../claws/doctor.js");
-              return await collectClawStateHealthFindings({ cfg: ctx.cfg, env: process.env });
+              const [{ collectClawStateHealthFindings }, { listConfiguredMcpServers }] =
+                await Promise.all([
+                  import("../claws/doctor.js"),
+                  import("../config/mcp-config.js"),
+                ]);
+              return await collectClawStateHealthFindings({
+                cfg: ctx.cfg,
+                env: process.env,
+                listMcpServers: listConfiguredMcpServers,
+              });
             },
           },
         ]
