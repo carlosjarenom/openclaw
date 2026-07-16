@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { applyClawPackageUpdate } from "./package-update.js";
+import { installClawPackages } from "./packages.js";
 import { CLAW_PACKAGE_REF_SCHEMA_VERSION, type PersistedClawPackageRef } from "./provenance.js";
 import { CLAW_OUTPUT_STABILITY, type ClawAddPlan, type ClawManifest } from "./types.js";
 import { CLAW_UPDATE_PLAN_SCHEMA_VERSION, type ClawUpdatePlan } from "./update-plan.js";
@@ -16,6 +17,7 @@ function ref(kind: "skill" | "plugin", name: string, version: string): Persisted
     status: "complete",
     ownership: "claw-installed",
     installedAtMs: 10,
+    updatedAtMs: 10,
   };
 }
 
@@ -25,6 +27,7 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
     stability: CLAW_OUTPUT_STABILITY,
     dryRun: true,
     mutationAllowed: false,
+    planIntegrity: "sha256:update-plan",
     found: true,
     agentId: "worker",
     currentClaw: { name: "@acme/worker", version: "1.0.0", integrity: "sha256:old" },
@@ -34,6 +37,7 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
       added: actions.filter((action) => action.action === "add").length,
       changed: actions.filter((action) => action.action === "change").length,
       removed: actions.filter((action) => action.action === "remove").length,
+      released: actions.filter((action) => action.action === "release").length,
       unchanged: 0,
       manual: 0,
       blocked: 0,
@@ -61,13 +65,17 @@ const addPlan: ClawAddPlan = {
   stability: CLAW_OUTPUT_STABILITY,
   dryRun: true,
   mutationAllowed: false,
+  manifestSchemaVersion: 1,
+  planIntegrity: "sha256:add-plan",
   claw: {
     kind: "package",
     name: "@acme/worker",
     version: "2.0.0",
     packageRoot: "/tmp/claw",
     manifestPath: "/tmp/claw/openclaw.claw.json",
+    integrityKind: "artifact",
     integrity: "sha256:new",
+    byteLength: 1,
   },
   agent: {
     requestedId: "worker",
@@ -94,20 +102,24 @@ const addPlan: ClawAddPlan = {
   })),
   blockers: [],
   diagnostics: [],
+  readiness: [],
 };
 
 describe("applyClawPackageUpdate", () => {
   it("updates exact references but reports retained artifacts on rollback", async () => {
     const oldSkill = ref("skill", "triage", "1.0.0");
     const legacy = ref("plugin", "legacy", "1.0.0");
-    const installPackages = vi.fn(async (current: ClawAddPlan) => {
-      const details = current.actions[0]?.details as {
-        kind: "skill" | "plugin";
-        ref: string;
-        version: string;
-      };
-      return [ref(details.kind, details.ref, details.version)];
-    });
+    const installPackages = vi.fn(
+      async (current: ClawAddPlan, options: Parameters<typeof installClawPackages>[1]) => {
+        const details = current.actions[0]?.details as {
+          kind: "skill" | "plugin";
+          ref: string;
+          version: string;
+        };
+        options.onExternalMutation?.({ ...details, source: "clawhub" });
+        return [ref(details.kind, details.ref, details.version)];
+      },
+    );
     const replaceExpected = vi.fn();
     const execution = await applyClawPackageUpdate(
       plan([
@@ -211,6 +223,107 @@ describe("applyClawPackageUpdate", () => {
       ),
     ).rejects.toMatchObject({ partial: false });
     expect(installPackages).not.toHaveBeenCalled();
+  });
+
+  it("allows only the expected prior version conflict for an owned plugin upgrade", async () => {
+    const previous = ref("plugin", "audit", "0.9.0");
+    const preflightPlugin = vi.fn(async () => ({
+      ok: false as const,
+      code: "plugin_version_conflict" as const,
+      request: {} as never,
+      installedVersion: "0.9.0",
+      expectedVersion: "1.0.0",
+    }));
+    const installPackages = vi.fn(
+      async (_plan: ClawAddPlan, options: Parameters<typeof installClawPackages>[1]) => {
+        const preflight = await options.deps?.preflightPlugin?.({
+          clawhubPackage: "audit",
+          rawSpec: "clawhub:audit@1.0.0",
+          expectedVersion: "1.0.0",
+        });
+        expect(preflight).toMatchObject({ ok: true, action: "install" });
+        return [ref("plugin", "audit", "1.0.0")];
+      },
+    );
+
+    await expect(
+      applyClawPackageUpdate(
+        plan([
+          {
+            kind: "package",
+            id: "plugin:audit",
+            action: "change",
+            target: "clawhub:audit@1.0.0",
+            blocked: false,
+            reason: "owned upgrade",
+          },
+        ]),
+        manifest,
+        addPlan,
+        {
+          installPackages,
+          readRefs: () => [previous],
+          replaceExpected: vi.fn(),
+          packageDeps: { preflightPlugin },
+        },
+      ),
+    ).resolves.toMatchObject({ appliedIds: ["plugin:audit"] });
+  });
+
+  it("rejects an owned plugin upgrade when another owner appears before install", async () => {
+    const previous = ref("plugin", "audit", "0.9.0");
+    const other = { ...previous, agentId: "other" };
+    const preflightPlugin = vi.fn(async () => ({
+      ok: false as const,
+      code: "plugin_version_conflict" as const,
+      request: {} as never,
+      installedVersion: "0.9.0",
+      expectedVersion: "1.0.0",
+    }));
+    const installPackages = vi.fn(
+      async (_plan: ClawAddPlan, options: Parameters<typeof installClawPackages>[1]) => {
+        const preflight = await options.deps?.preflightPlugin?.({
+          clawhubPackage: "audit",
+          rawSpec: "clawhub:audit@1.0.0",
+          expectedVersion: "1.0.0",
+        });
+        if (!preflight?.ok) {
+          throw new Error("plugin version conflict");
+        }
+        return [ref("plugin", "audit", "1.0.0")];
+      },
+    );
+    let reads = 0;
+    const readRefs = vi.fn((options?: { agentId?: string }) => {
+      reads += 1;
+      if (options?.agentId) {
+        return [previous];
+      }
+      return reads >= 3 ? [previous, other] : [previous];
+    });
+
+    await expect(
+      applyClawPackageUpdate(
+        plan([
+          {
+            kind: "package",
+            id: "plugin:audit",
+            action: "change",
+            target: "clawhub:audit@1.0.0",
+            blocked: false,
+            reason: "owned upgrade",
+          },
+        ]),
+        manifest,
+        addPlan,
+        {
+          installPackages,
+          readRefs,
+          replaceExpected: vi.fn(),
+          packageDeps: { preflightPlugin },
+        },
+      ),
+    ).rejects.toMatchObject({ partial: false });
   });
 
   it("does not invoke an installer when package ownership changes after planning", async () => {

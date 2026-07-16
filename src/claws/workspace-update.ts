@@ -155,6 +155,7 @@ export async function applyClawWorkspaceUpdate(
           `Workspace source for ${JSON.stringify(path)} changed after planning.`,
         );
       }
+      const nowMs = options.nowMs ?? Date.now();
       const record: PersistedClawWorkspaceFile = {
         schemaVersion: CLAW_WORKSPACE_FILE_RECORD_SCHEMA_VERSION,
         agentId: updatePlan.agentId,
@@ -162,7 +163,9 @@ export async function applyClawWorkspaceUpdate(
         path,
         sourcePath: resolve(target.source),
         contentDigest: target.digest,
-        createdAtMs: previousRef?.createdAtMs ?? options.nowMs ?? Date.now(),
+        status: "complete",
+        createdAtMs: previousRef?.createdAtMs ?? nowMs,
+        updatedAtMs: nowMs,
       };
       undo.push(async () => {
         if (!(await workspace.exists(path))) {

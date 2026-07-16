@@ -11,7 +11,9 @@ const source: ClawSourceIdentity = {
   version: "2.0.0",
   packageRoot: "/tmp/target",
   manifestPath: "/tmp/target/openclaw.claw.json",
+  integrityKind: "artifact",
   integrity: "sha256:target",
+  byteLength: 1,
 };
 const manifest: ClawManifest = {
   schemaVersion: 1,
@@ -24,9 +26,12 @@ const manifest: ClawManifest = {
 const install: PersistedClawInstall = {
   schemaVersion: "openclaw.clawInstallRecord.v1",
   claw: { ...source, version: "1.0.0", integrity: "sha256:current" },
+  manifestSchemaVersion: 1,
+  planIntegrity: "sha256:current-add-plan",
   agentId: "worker",
   workspace: "/tmp/workspace-worker",
   agentConfigDigest: "sha256:current-agent",
+  agentOwnedPaths: ["agents.list.worker"],
   status: "complete",
   addedAtMs: 1,
   updatedAtMs: 1,
@@ -36,6 +41,8 @@ const addPlan: ClawAddPlan = {
   stability: "experimental",
   dryRun: true,
   mutationAllowed: false,
+  manifestSchemaVersion: 1,
+  planIntegrity: "sha256:target-add-plan",
   claw: source,
   agent: {
     requestedId: "worker",
@@ -55,6 +62,7 @@ const addPlan: ClawAddPlan = {
   actions: [],
   blockers: [],
   diagnostics: [],
+  readiness: [],
 };
 
 function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
@@ -63,6 +71,7 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
     stability: "experimental",
     dryRun: true,
     mutationAllowed: false,
+    planIntegrity: "sha256:update-plan",
     found: true,
     agentId: "worker",
     currentClaw: { name: "@acme/worker", version: "1.0.0", integrity: "sha256:current" },
@@ -72,6 +81,7 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
       added: 0,
       changed: actions.filter((action) => action.action === "change").length,
       removed: 0,
+      released: 0,
       unchanged: actions.filter((action) => action.action === "unchanged").length,
       manual: 0,
       blocked: actions.filter((action) => action.blocked).length,
@@ -82,7 +92,33 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
   };
 }
 
+function consent(updatePlan: ClawUpdatePlan) {
+  return {
+    sourceMcpServers: {},
+    consentPlanIntegrity: updatePlan.planIntegrity,
+  };
+}
+
 describe("applyClawUpdatePlan", () => {
+  it("rejects consent that does not match the preview before rebuilding", async () => {
+    const updatePlan = plan([]);
+    const rebuildPlan = vi.fn();
+
+    await expect(
+      applyClawUpdatePlan(
+        updatePlan,
+        { targetManifest: manifest, targetSource: source },
+        {
+          config: {},
+          sourceMcpServers: {},
+          consentPlanIntegrity: "sha256:different-plan",
+          rebuildPlan,
+        },
+      ),
+    ).rejects.toMatchObject({ code: "plan_integrity_mismatch" });
+    expect(rebuildPlan).not.toHaveBeenCalled();
+  });
+
   it("compare-writes the owned agent and advances root provenance", async () => {
     const currentAgent = { id: "worker", name: "Worker" };
     const currentDigest = `sha256:${createHash("sha256").update(stableStringify(currentAgent)).digest("hex")}`;
@@ -107,6 +143,7 @@ describe("applyClawUpdatePlan", () => {
       { targetManifest: manifest, targetSource: source },
       {
         config,
+        ...consent(updatePlan),
         rebuildPlan: vi.fn(async () => updatePlan),
         buildAddPlan: vi.fn(async () => addPlan),
         readInstall: vi.fn(() => install),
@@ -146,6 +183,7 @@ describe("applyClawUpdatePlan", () => {
         { targetManifest: manifest, targetSource: source },
         {
           config: {},
+          ...consent(updatePlan),
           rebuildPlan: vi.fn(async () => updatePlan),
           buildAddPlan: vi.fn(async () => addPlan),
           readInstall: vi.fn(() => install),
@@ -180,6 +218,7 @@ describe("applyClawUpdatePlan", () => {
         { targetManifest: manifest, targetSource: source },
         {
           config: {},
+          ...consent(updatePlan),
           rebuildPlan: vi.fn(async () => updatePlan),
           buildAddPlan: vi.fn(async () => addPlan),
           readInstall: vi.fn(() => install),
@@ -221,6 +260,7 @@ describe("applyClawUpdatePlan", () => {
         { targetManifest: manifest, targetSource: source },
         {
           config,
+          ...consent(updatePlan),
           rebuildPlan: vi.fn(async () => updatePlan),
           buildAddPlan: vi.fn(async () => addPlan),
           readInstall: vi.fn(() => install),
@@ -247,6 +287,7 @@ describe("applyClawUpdatePlan", () => {
         { targetManifest: manifest, targetSource: source },
         {
           config: {},
+          ...consent(updatePlan),
           rebuildPlan: vi.fn(async () => changed),
           readInstall: vi.fn(() => install),
         },
@@ -269,7 +310,7 @@ describe("applyClawUpdatePlan", () => {
           ],
         },
         { targetManifest: manifest, targetSource: source },
-        { config: {}, readInstall: vi.fn(() => install) },
+        { config: {}, ...consent(updatePlan), readInstall: vi.fn(() => install) },
       ),
     ).rejects.toMatchObject({ code: "update_blocked" });
   });

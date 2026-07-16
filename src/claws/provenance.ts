@@ -388,6 +388,9 @@ export function updateClawInstallRecord(
   }
   const updatedAtMs = options.nowMs ?? Date.now();
   const agentConfigDigest = digestAgentConfig(plan);
+  const agentOwnedPaths = plan.actions
+    .filter((action) => action.kind === "agent")
+    .map((action) => action.target);
   runOpenClawStateWriteTransaction(({ db }) => {
     const result = db
       .prepare(
@@ -397,9 +400,14 @@ export function updateClawInstallRecord(
                 claw_version = @claw_version,
                 package_root = @package_root,
                 manifest_path = @manifest_path,
+                integrity_kind = @integrity_kind,
                 integrity = @integrity,
+                source_byte_length = @source_byte_length,
+                manifest_schema_version = @manifest_schema_version,
+                plan_integrity = @plan_integrity,
                 workspace = @workspace,
                 agent_config_digest = @agent_config_digest,
+                agent_owned_paths_json = @agent_owned_paths_json,
                 status = 'complete',
                 updated_at_ms = @updated_at_ms
           WHERE agent_id = @agent_id
@@ -413,9 +421,14 @@ export function updateClawInstallRecord(
         claw_version: plan.claw.version,
         package_root: plan.claw.packageRoot,
         manifest_path: plan.claw.manifestPath,
+        integrity_kind: plan.claw.integrityKind,
         integrity: plan.claw.integrity,
+        source_byte_length: plan.claw.byteLength,
+        manifest_schema_version: plan.manifestSchemaVersion,
+        plan_integrity: plan.planIntegrity,
         workspace: plan.agent.workspace,
         agent_config_digest: agentConfigDigest,
+        agent_owned_paths_json: JSON.stringify(agentOwnedPaths),
         updated_at_ms: updatedAtMs,
         expected_claw_version: options.expectedClaw?.version ?? current.claw.version,
         expected_integrity: options.expectedClaw?.integrity ?? current.claw.integrity,
@@ -429,9 +442,12 @@ export function updateClawInstallRecord(
   return {
     schemaVersion: CLAW_INSTALL_RECORD_SCHEMA_VERSION,
     claw: plan.claw,
+    manifestSchemaVersion: plan.manifestSchemaVersion,
+    planIntegrity: plan.planIntegrity,
     agentId: plan.agent.finalId,
     workspace: plan.agent.workspace,
     agentConfigDigest,
+    agentOwnedPaths,
     status: "complete",
     addedAtMs: current.addedAtMs,
     updatedAtMs,
@@ -717,7 +733,8 @@ export function replaceClawPackageRefExpected(
               AND claw_name = @claw_name
               AND package_status = @package_status
               AND ownership = @ownership
-              AND installed_at_ms = @installed_at_ms`,
+              AND installed_at_ms = @installed_at_ms
+              AND updated_at_ms = @updated_at_ms`,
         )
         .run({
           agent_id: expected.agentId,
@@ -730,6 +747,7 @@ export function replaceClawPackageRefExpected(
           package_status: expected.status,
           ownership: expected.ownership,
           installed_at_ms: expected.installedAtMs,
+          updated_at_ms: expected.updatedAtMs,
         });
       if (Number(result.changes) !== 1) {
         throw new Error(
@@ -753,10 +771,12 @@ export function replaceClawPackageRefExpected(
       db.prepare(
         `INSERT INTO claw_package_refs (
            agent_id, package_kind, package_source, package_ref, package_version,
-           schema_version, claw_name, package_status, ownership, installed_at_ms
+           schema_version, claw_name, package_status, ownership, installed_at_ms,
+           updated_at_ms
          ) VALUES (
            @agent_id, @package_kind, @package_source, @package_ref, @package_version,
-           @schema_version, @claw_name, @package_status, @ownership, @installed_at_ms
+           @schema_version, @claw_name, @package_status, @ownership, @installed_at_ms,
+           @updated_at_ms
          )`,
       ).run({
         agent_id: replacement.agentId,
@@ -769,6 +789,7 @@ export function replaceClawPackageRefExpected(
         package_status: replacement.status,
         ownership: replacement.ownership,
         installed_at_ms: replacement.installedAtMs,
+        updated_at_ms: replacement.updatedAtMs,
       });
     }
   }, options);
@@ -782,10 +803,12 @@ export function upsertClawPackageRef(
     db.prepare(
       `INSERT INTO claw_package_refs (
          agent_id, package_kind, package_source, package_ref, package_version,
-         schema_version, claw_name, package_status, ownership, installed_at_ms
+         schema_version, claw_name, package_status, ownership, installed_at_ms,
+         updated_at_ms
        ) VALUES (
          @agent_id, @package_kind, @package_source, @package_ref, @package_version,
-         @schema_version, @claw_name, @package_status, @ownership, @installed_at_ms
+         @schema_version, @claw_name, @package_status, @ownership, @installed_at_ms,
+         @updated_at_ms
        )
        ON CONFLICT(agent_id, package_kind, package_source, package_ref, package_version)
        DO UPDATE SET
@@ -793,7 +816,8 @@ export function upsertClawPackageRef(
          claw_name = excluded.claw_name,
          package_status = excluded.package_status,
          ownership = excluded.ownership,
-         installed_at_ms = excluded.installed_at_ms`,
+         installed_at_ms = excluded.installed_at_ms,
+         updated_at_ms = excluded.updated_at_ms`,
     ).run({
       agent_id: ref.agentId,
       package_kind: ref.kind,
@@ -805,6 +829,7 @@ export function upsertClawPackageRef(
       package_status: ref.status,
       ownership: ref.ownership,
       installed_at_ms: ref.installedAtMs,
+      updated_at_ms: ref.updatedAtMs,
     });
   }, options);
 }

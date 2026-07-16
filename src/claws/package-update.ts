@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { stableStringify } from "../agents/stable-stringify.js";
+import { preflightPluginInstall } from "../plugins/plugin-install-preflight.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import { installClawPackages, type PackageInstallerDeps } from "./packages.js";
 import {
@@ -129,6 +130,7 @@ export async function applyClawPackageUpdate(
           false,
         );
       }
+      const nowMs = options.nowMs ?? Date.now();
       let claimed: PersistedClawPackageRef = {
         schemaVersion: CLAW_PACKAGE_REF_SCHEMA_VERSION,
         agentId: updatePlan.agentId,
@@ -139,33 +141,58 @@ export async function applyClawPackageUpdate(
         version: target.version,
         status: "pending",
         ownership: "claw-installed",
-        installedAtMs: options.nowMs ?? Date.now(),
+        installedAtMs: nowMs,
+        updatedAtMs: nowMs,
       };
       replaceExpected(previous, claimed, options);
       undo.push(async () => replaceExpected(claimed, previous, options));
-      externalMutations.push(`${target.kind}:${target.ref}@${target.version}`);
       const refs = await installPackages(
         { ...targetAddPlan, actions: [targetAction] },
         {
           ...options,
           deps: {
             ...options.packageDeps,
+            preflightPlugin: async (params) => {
+              const preflight = await (
+                options.packageDeps?.preflightPlugin ?? preflightPluginInstall
+              )(params);
+              const conflictingOwner = readRefs(options).some(
+                (ref) =>
+                  ref.agentId !== updatePlan.agentId &&
+                  ref.kind === "plugin" &&
+                  ref.source === target.source &&
+                  ref.ref === target.ref &&
+                  ref.version !== target.version,
+              );
+              return !preflight.ok &&
+                preflight.code === "plugin_version_conflict" &&
+                !conflictingOwner &&
+                previous?.ownership === "claw-installed" &&
+                previous.version === preflight.installedVersion &&
+                target.version === preflight.expectedVersion
+                ? { ok: true, action: "install", request: preflight.request }
+                : preflight;
+            },
             persistPackageRef: (_plan, _pkg, persistOptions) => {
               const next = {
                 ...claimed,
                 status: persistOptions?.status ?? "complete",
                 ownership: persistOptions?.ownership ?? "claw-installed",
+                updatedAtMs: nowMs,
               };
               replaceExpected(claimed, next, options);
               claimed = next;
               return next;
             },
             completePackageRef: (ref, status) => {
-              const next = { ...ref, status };
+              const next = { ...ref, status, updatedAtMs: nowMs };
               replaceExpected(claimed, next, options);
               claimed = next;
               return next;
             },
+          },
+          onExternalMutation: () => {
+            externalMutations.push(`${target.kind}:${target.ref}@${target.version}`);
           },
         },
       );

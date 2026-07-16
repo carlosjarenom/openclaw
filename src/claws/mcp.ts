@@ -436,15 +436,16 @@ export function upsertClawMcpServerRef(
   runOpenClawStateWriteTransaction(({ db }) => {
     db.prepare(
       `INSERT INTO claw_mcp_server_refs (
-         agent_id, name, schema_version, config_digest, status, error,
+         agent_id, name, schema_version, config_digest, ownership, status, error,
          created_at_ms, updated_at_ms
        ) VALUES (
-         @agent_id, @name, @schema_version, @config_digest, @status, @error,
+         @agent_id, @name, @schema_version, @config_digest, @ownership, @status, @error,
          @created_at_ms, @updated_at_ms
        )
        ON CONFLICT(agent_id, name) DO UPDATE SET
          schema_version = excluded.schema_version,
          config_digest = excluded.config_digest,
+         ownership = excluded.ownership,
          status = excluded.status,
          error = excluded.error,
          updated_at_ms = excluded.updated_at_ms`,
@@ -453,6 +454,7 @@ export function upsertClawMcpServerRef(
       name: ref.name,
       schema_version: ref.schemaVersion,
       config_digest: ref.configDigest,
+      ownership: ref.ownership,
       status: ref.status,
       error: ref.error ?? null,
       created_at_ms: ref.createdAtMs,

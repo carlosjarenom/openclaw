@@ -211,21 +211,22 @@ export function upsertClawWorkspaceFile(
   options: OpenClawStateDatabaseOptions = {},
 ): void {
   runOpenClawStateWriteTransaction(({ db }) => {
-    ensureWorkspaceFileTable(db);
     db.prepare(
       `INSERT INTO claw_workspace_files (
          agent_id, target_path, schema_version, workspace, source_path,
-         content_digest, created_at_ms
+         content_digest, status, created_at_ms, updated_at_ms
        ) VALUES (
          @agent_id, @target_path, @schema_version, @workspace, @source_path,
-         @content_digest, @created_at_ms
+         @content_digest, @status, @created_at_ms, @updated_at_ms
        )
        ON CONFLICT(agent_id, target_path) DO UPDATE SET
          schema_version = excluded.schema_version,
          workspace = excluded.workspace,
          source_path = excluded.source_path,
          content_digest = excluded.content_digest,
-         created_at_ms = excluded.created_at_ms`,
+         status = excluded.status,
+         created_at_ms = excluded.created_at_ms,
+         updated_at_ms = excluded.updated_at_ms`,
     ).run({
       agent_id: record.agentId,
       target_path: record.path,
@@ -233,7 +234,9 @@ export function upsertClawWorkspaceFile(
       workspace: record.workspace,
       source_path: record.sourcePath,
       content_digest: record.contentDigest,
+      status: record.status,
       created_at_ms: record.createdAtMs,
+      updated_at_ms: record.updatedAtMs,
     });
   }, options);
 }
@@ -244,7 +247,6 @@ export function deleteClawWorkspaceFileRecord(
   options: OpenClawStateDatabaseOptions = {},
 ): void {
   runOpenClawStateWriteTransaction(({ db }) => {
-    ensureWorkspaceFileTable(db);
     db.prepare("DELETE FROM claw_workspace_files WHERE agent_id = ? AND target_path = ?").run(
       agentId,
       path,

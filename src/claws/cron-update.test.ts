@@ -6,20 +6,20 @@ import { CLAW_UPDATE_PLAN_SCHEMA_VERSION, type ClawUpdatePlan } from "./update-p
 
 const oldDaily: ClawCronJob = {
   id: "daily",
-  schedule: { cron: "0 9 * * *" },
+  schedule: { cron: "0 9 * * *", timezone: "UTC" },
   session: "main",
   message: "Old daily",
 };
 const newDaily: ClawCronJob = { ...oldDaily, message: "New daily" };
 const legacy: ClawCronJob = {
   id: "legacy",
-  schedule: { cron: "0 8 * * *" },
+  schedule: { cron: "0 8 * * *", timezone: "UTC" },
   session: "isolated",
   message: "Legacy",
 };
 const weekly: ClawCronJob = {
   id: "weekly",
-  schedule: { cron: "0 9 * * 1" },
+  schedule: { cron: "0 9 * * 1", timezone: "UTC" },
   session: "main",
   message: "Weekly",
 };
@@ -44,6 +44,7 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
     stability: CLAW_OUTPUT_STABILITY,
     dryRun: true,
     mutationAllowed: false,
+    planIntegrity: "sha256:update-plan",
     found: true,
     agentId: "worker",
     currentClaw: { name: "@acme/worker", version: "1.0.0", integrity: "sha256:old" },
@@ -53,6 +54,7 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
       added: actions.filter((action) => action.action === "add").length,
       changed: actions.filter((action) => action.action === "change").length,
       removed: actions.filter((action) => action.action === "remove").length,
+      released: actions.filter((action) => action.action === "release").length,
       unchanged: 0,
       manual: 0,
       blocked: 0,

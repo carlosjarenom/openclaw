@@ -217,8 +217,7 @@ export function clawCronGatewayInput(
       expr: job.schedule.cron,
       ...(job.schedule.timezone ? { tz: job.schedule.timezone } : {}),
     },
-    sessionTarget:
-      job.session === "main" ? `session:agent:${plan.agent.finalId}:main` : job.session,
+    sessionTarget: job.session === "main" ? `session:agent:${agentId}:main` : job.session,
     wakeMode: "now",
     payload: { kind: "agentTurn", message: job.message },
     delivery: job.delivery

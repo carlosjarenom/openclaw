@@ -17,6 +17,7 @@ import {
   readClawInstallRecord,
   readClawPackageRefs,
   replaceClawPackageRefExpected,
+  upsertClawPackageRef,
   updateClawInstallRecord,
   updateClawInstallRecordStatus,
   updateClawPackageRefStatus,
@@ -302,6 +303,34 @@ describe("Claw root install provenance", () => {
       "changed after planning",
     );
     expect(readClawPackageRefs(options)).toEqual([current]);
+  });
+
+  it("replaces and restores package references with complete timestamps", async () => {
+    const { root, plan } = await makePlan();
+    const options = { env: stateEnv(root) };
+    const planned = persistClawPackageRef(
+      plan,
+      {
+        kind: "plugin",
+        source: "clawhub",
+        ref: "@acme/audit",
+        version: "2.3.4",
+      },
+      { ...options, nowMs: 43 },
+    );
+    const replacement = {
+      ...planned,
+      version: "3.0.0",
+      status: "pending" as const,
+      updatedAtMs: 44,
+    };
+
+    replaceClawPackageRefExpected(planned, replacement, options);
+    expect(readClawPackageRefs(options)).toEqual([replacement]);
+
+    const restored = { ...planned, updatedAtMs: 45 };
+    upsertClawPackageRef(restored, options);
+    expect(readClawPackageRefs(options)).toEqual(expect.arrayContaining([replacement, restored]));
   });
 });
 

@@ -51,7 +51,9 @@ describe("applyClawWorkspaceUpdate", () => {
       version: "1.0.0",
       packageRoot: currentRoot,
       manifestPath: join(currentRoot, "openclaw.claw.json"),
+      integrityKind: "artifact",
       integrity: "sha256:current",
+      byteLength: 1,
     };
     const targetSource: ClawSourceIdentity = {
       ...currentSource,
@@ -70,6 +72,7 @@ describe("applyClawWorkspaceUpdate", () => {
     let config: OpenClawConfig = {};
     await applyClawAddPlan(currentAddPlan, {
       env,
+      consentPlanIntegrity: currentAddPlan.planIntegrity,
       commitConfig: async (transform) => {
         config = transform(config);
       },
@@ -79,6 +82,7 @@ describe("applyClawWorkspaceUpdate", () => {
       targetManifest: targetParsed.manifest,
       targetSource,
       config,
+      sourceMcpServers: {},
       stateOptions: { env },
     });
     const targetAddPlan = await buildClawAddPlan({

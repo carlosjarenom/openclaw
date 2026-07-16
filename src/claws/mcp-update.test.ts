@@ -1,9 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { applyClawMcpUpdate } from "./mcp-update.js";
 import {
   CLAW_MCP_REF_SCHEMA_VERSION,
   digestClawMcpServer,
+  readClawMcpServerRefs,
+  upsertClawMcpServerRef,
   type PersistedClawMcpServerRef,
 } from "./mcp.js";
 import { CLAW_OUTPUT_STABILITY, type ClawManifest, type ClawMcpServer } from "./types.js";
@@ -18,12 +24,15 @@ const remote: ClawMcpServer = {
   auth: "oauth",
 };
 
+afterEach(() => closeOpenClawStateDatabaseForTest());
+
 function ref(name: string, server: ClawMcpServer): PersistedClawMcpServerRef {
   return {
     schemaVersion: CLAW_MCP_REF_SCHEMA_VERSION,
     agentId: "worker",
     name,
     configDigest: digestClawMcpServer(server),
+    ownership: "claw-installed",
     status: "complete",
     createdAtMs: 10,
     updatedAtMs: 10,
@@ -36,6 +45,7 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
     stability: CLAW_OUTPUT_STABILITY,
     dryRun: true,
     mutationAllowed: false,
+    planIntegrity: "sha256:update-plan",
     found: true,
     agentId: "worker",
     currentClaw: { name: "@acme/worker", version: "1.0.0", integrity: "sha256:old" },
@@ -45,6 +55,7 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
       added: actions.filter((action) => action.action === "add").length,
       changed: actions.filter((action) => action.action === "change").length,
       removed: actions.filter((action) => action.action === "remove").length,
+      released: actions.filter((action) => action.action === "release").length,
       unchanged: 0,
       manual: 0,
       blocked: 0,
@@ -113,9 +124,13 @@ describe("applyClawMcpUpdate", () => {
       ]),
       manifest(),
       {
-        config: { mcp: { servers: { docs: oldDocs, legacy } } } as OpenClawConfig,
+        config: {
+          mcp: { servers: { docs: { command: "uvx", args: ["docs-resolved"] }, legacy } },
+        } as OpenClawConfig,
+        sourceMcpServers: { docs: oldDocs, legacy },
         nowMs: 20,
         readRefs: () => currentRefs,
+        planRemoval: () => "remove",
         setServer,
         unsetServer,
         upsertRef,
@@ -156,6 +171,98 @@ describe("applyClawMcpUpdate", () => {
     expect(deleteRef).toHaveBeenCalledTimes(2);
   });
 
+  it("releases ownership without removing shared or independently owned config", async () => {
+    const independent = { ...ref("legacy", legacy), ownership: "independently-owned" as const };
+    const unsetServer = vi.fn();
+    const upsertRef = vi.fn();
+    const deleteRef = vi.fn();
+    const execution = await applyClawMcpUpdate(
+      plan([
+        {
+          kind: "mcpServer",
+          id: "legacy",
+          action: "release",
+          target: "mcp.servers.legacy",
+          blocked: false,
+          reason: "shared config survives",
+        },
+      ]),
+      manifest(),
+      {
+        config: { mcp: { servers: { legacy } } },
+        sourceMcpServers: { legacy },
+        readRefs: () => [independent],
+        planRemoval: () => "release",
+        unsetServer,
+        upsertRef,
+        deleteRef,
+      },
+    );
+
+    expect(unsetServer).not.toHaveBeenCalled();
+    expect(deleteRef).toHaveBeenCalledWith("worker", "legacy", expect.any(Object));
+    await execution.rollback();
+    expect(upsertRef).toHaveBeenCalledWith(independent, expect.any(Object));
+  });
+
+  it("rejects release when exact config becomes solely Claw-owned", async () => {
+    const previous = ref("legacy", legacy);
+    const deleteRef = vi.fn();
+    await expect(
+      applyClawMcpUpdate(
+        plan([
+          {
+            kind: "mcpServer",
+            id: "legacy",
+            action: "release",
+            target: "mcp.servers.legacy",
+            blocked: false,
+            reason: "shared at preview",
+          },
+        ]),
+        manifest(),
+        {
+          config: { mcp: { servers: { legacy } } },
+          sourceMcpServers: { legacy },
+          readRefs: () => [previous],
+          planRemoval: () => "remove",
+          deleteRef,
+        },
+      ),
+    ).rejects.toThrow("no longer safely releasable");
+    expect(deleteRef).not.toHaveBeenCalled();
+  });
+
+  it("restores complete MCP ownership through a real release rollback", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openclaw-mcp-release-"));
+    const stateOptions = { env: { OPENCLAW_STATE_DIR: join(root, "state") } };
+    const independent = { ...ref("legacy", legacy), ownership: "independently-owned" as const };
+    upsertClawMcpServerRef(independent, stateOptions);
+
+    const execution = await applyClawMcpUpdate(
+      plan([
+        {
+          kind: "mcpServer",
+          id: "legacy",
+          action: "release",
+          target: "mcp.servers.legacy",
+          blocked: false,
+          reason: "release only",
+        },
+      ]),
+      manifest(),
+      {
+        ...stateOptions,
+        config: { mcp: { servers: { legacy } } },
+        sourceMcpServers: { legacy },
+      },
+    );
+    expect(readClawMcpServerRefs("worker", stateOptions)).toEqual([]);
+
+    await execution.rollback();
+    expect(readClawMcpServerRefs("worker", stateOptions)).toEqual([independent]);
+  });
+
   it("does not compensate a config write rejected before mutation", async () => {
     const setServer = vi.fn(async () => ({ ok: false as const, path: "config", error: "changed" }));
     const unsetServer = vi.fn();
@@ -175,6 +282,7 @@ describe("applyClawMcpUpdate", () => {
         manifest(),
         {
           config: { mcp: { servers: { docs: oldDocs } } },
+          sourceMcpServers: { docs: oldDocs },
           readRefs: () => [ref("docs", oldDocs)],
           setServer,
           unsetServer,
@@ -202,6 +310,7 @@ describe("applyClawMcpUpdate", () => {
         manifest(),
         {
           config: { mcp: { servers: { remote } } },
+          sourceMcpServers: { remote },
           readRefs: () => [],
           setServer,
         },

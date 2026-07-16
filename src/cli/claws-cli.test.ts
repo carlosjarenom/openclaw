@@ -839,7 +839,17 @@ describe("claws cli", () => {
   it("applies a supported update only after explicit consent", async () => {
     const { root } = await writePackage();
 
-    await runCli(["claws", "update", "demo-agent", "--from", root, "--yes", "--json"]);
+    await runCli([
+      "claws",
+      "update",
+      "demo-agent",
+      "--from",
+      root,
+      "--yes",
+      "--plan-integrity",
+      "sha256:update-plan",
+      "--json",
+    ]);
 
     expect(mocks.applyClawUpdatePlan).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "demo-agent" }),
@@ -850,6 +860,9 @@ describe("claws cli", () => {
       }),
       expect.objectContaining({
         config: {},
+        sourceMcpServers: {},
+        consentPlanIntegrity: "sha256:update-plan",
+        packagePreflight: expect.any(Function),
         cronGateway: expect.objectContaining({
           add: expect.any(Function),
           remove: expect.any(Function),

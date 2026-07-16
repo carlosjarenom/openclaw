@@ -9,7 +9,7 @@ import {
   type ClawCronUpdateExecution,
 } from "./cron-update.js";
 import type { ClawCronGateway } from "./cron.js";
-import { buildClawAddPlan } from "./lifecycle.js";
+import { buildClawAddPlan, type ClawAddPlanContext } from "./lifecycle.js";
 import {
   applyClawMcpUpdate,
   ClawMcpUpdateError,
@@ -79,6 +79,9 @@ export async function applyClawUpdatePlan(
   },
   options: OpenClawStateDatabaseOptions & {
     config: OpenClawConfig;
+    sourceMcpServers: Record<string, Record<string, unknown>>;
+    consentPlanIntegrity: string | undefined;
+    packagePreflight?: ClawAddPlanContext["packagePreflight"];
     commitConfig?: ConfigCommit;
     rebuildPlan?: typeof buildClawUpdatePlan;
     buildAddPlan?: typeof buildClawAddPlan;
@@ -91,6 +94,12 @@ export async function applyClawUpdatePlan(
     cronGateway?: ClawCronGateway;
   },
 ): Promise<ClawUpdateResult> {
+  if (options.consentPlanIntegrity !== plan.planIntegrity) {
+    throw new ClawUpdateMutationError(
+      "plan_integrity_mismatch",
+      "Consent does not match the current Claw update plan; run update --dry-run again.",
+    );
+  }
   if (!plan.found || plan.blockers.length > 0 || plan.actions.some((action) => action.blocked)) {
     throw new ClawUpdateMutationError(
       "update_blocked",
@@ -104,9 +113,14 @@ export async function applyClawUpdatePlan(
     targetManifest: params.targetManifest,
     targetSource: params.targetSource,
     config: options.config,
+    sourceMcpServers: options.sourceMcpServers,
     stateOptions: options,
+    packagePreflight: options.packagePreflight,
   });
-  if (stableStringify(comparablePlan(fresh)) !== stableStringify(comparablePlan(plan))) {
+  if (
+    fresh.planIntegrity !== plan.planIntegrity ||
+    stableStringify(comparablePlan(fresh)) !== stableStringify(comparablePlan(plan))
+  ) {
     throw new ClawUpdateMutationError(
       "update_changed",
       "Claw-owned state changed after update planning; build a new dry-run plan.",
@@ -141,7 +155,28 @@ export async function applyClawUpdatePlan(
   const targetAddPlan = await buildAddPlan({
     manifest: params.targetManifest,
     source: params.targetSource,
-    context: { agentId: fresh.agentId, workspace: currentInstall.workspace },
+    context: {
+      agentId: fresh.agentId,
+      workspace: currentInstall.workspace,
+      packagePreflight: async (pkg) => {
+        const preflight = options.packagePreflight
+          ? await options.packagePreflight(pkg)
+          : {
+              ok: false,
+              code: "package_install_unavailable",
+              message: "Package preflight is unavailable.",
+            };
+        const action = fresh.actions.find(
+          (candidate) => candidate.kind === "package" && candidate.id === `${pkg.kind}:${pkg.ref}`,
+        );
+        return !preflight.ok &&
+          pkg.kind === "plugin" &&
+          preflight.code === "plugin_version_conflict" &&
+          action?.action === "change"
+          ? { ok: true, action: "install" as const }
+          : preflight;
+      },
+    },
   });
   if (
     targetAddPlan.blockers.some(

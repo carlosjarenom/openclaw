@@ -6,6 +6,7 @@ import {
   CLAW_MCP_REF_SCHEMA_VERSION,
   deleteClawMcpServerRef,
   digestClawMcpServer,
+  planClawMcpServerRemoval,
   readClawMcpServerRefs,
   upsertClawMcpServerRef,
   type PersistedClawMcpServerRef,
@@ -33,10 +34,12 @@ export async function applyClawMcpUpdate(
   targetManifest: ClawManifest,
   options: OpenClawStateDatabaseOptions & {
     config: OpenClawConfig;
+    sourceMcpServers: Record<string, Record<string, unknown>>;
     nowMs?: number;
     setServer?: typeof setConfiguredMcpServer;
     unsetServer?: typeof unsetConfiguredMcpServer;
     readRefs?: typeof readClawMcpServerRefs;
+    planRemoval?: typeof planClawMcpServerRemoval;
     upsertRef?: typeof upsertClawMcpServerRef;
     deleteRef?: typeof deleteClawMcpServerRef;
   },
@@ -50,10 +53,11 @@ export async function applyClawMcpUpdate(
   const setServer = options.setServer ?? setConfiguredMcpServer;
   const unsetServer = options.unsetServer ?? unsetConfiguredMcpServer;
   const readRefs = options.readRefs ?? readClawMcpServerRefs;
+  const planRemoval = options.planRemoval ?? planClawMcpServerRemoval;
   const upsertRef = options.upsertRef ?? upsertClawMcpServerRef;
   const deleteRef = options.deleteRef ?? deleteClawMcpServerRef;
   const currentRefs = new Map(readRefs(updatePlan.agentId, options).map((ref) => [ref.name, ref]));
-  const currentServers = normalizeConfiguredMcpServers(options.config.mcp?.servers);
+  const currentServers = normalizeConfiguredMcpServers(options.sourceMcpServers);
   const undo: Array<() => Promise<void>> = [];
   const appliedNames: string[] = [];
   const nowMs = options.nowMs ?? Date.now();
@@ -61,7 +65,7 @@ export async function applyClawMcpUpdate(
 
   const rollback = async () => {
     const failures: string[] = [];
-    for (const revert of [...undo].reverse()) {
+    for (const revert of undo.toReversed()) {
       try {
         await revert();
       } catch (error) {
@@ -88,9 +92,31 @@ export async function applyClawMcpUpdate(
           `MCP server ${JSON.stringify(name)} is not owned by this Claw.`,
         );
       }
+      if (action.action === "release") {
+        if (!previousRef) {
+          throw new ClawMcpUpdateError(`MCP reference ${JSON.stringify(name)} disappeared.`);
+        }
+        const exactLiveConfig =
+          previousServer !== undefined &&
+          digestClawMcpServer(previousServer) === previousRef.configDigest;
+        if (exactLiveConfig && planRemoval(previousRef, options) !== "release") {
+          throw new ClawMcpUpdateError(
+            `MCP server ${JSON.stringify(name)} is no longer safely releasable.`,
+          );
+        }
+        deleteRef(updatePlan.agentId, name, options);
+        undo.push(async () => upsertRef(previousRef, options));
+        appliedNames.push(name);
+        continue;
+      }
       if (action.action === "remove") {
         if (!previousServer || !previousRef) {
           throw new ClawMcpUpdateError(`MCP server ${JSON.stringify(name)} disappeared.`);
+        }
+        if (planRemoval(previousRef, options) !== "remove") {
+          throw new ClawMcpUpdateError(
+            `MCP server ${JSON.stringify(name)} gained another owner after planning.`,
+          );
         }
         configMutationUncertain = true;
         const removed = await unsetServer({ name, expectedServer: previousServer });
@@ -119,6 +145,7 @@ export async function applyClawMcpUpdate(
         agentId: updatePlan.agentId,
         name,
         configDigest: digestClawMcpServer(targetServer),
+        ownership: previousRef?.ownership ?? "claw-installed",
         status: "complete",
         createdAtMs: previousRef?.createdAtMs ?? nowMs,
         updatedAtMs: nowMs,
