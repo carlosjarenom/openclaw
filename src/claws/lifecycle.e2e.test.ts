@@ -266,13 +266,13 @@ describe("claws lifecycle cli e2e", () => {
   });
 
   it("exports an installed agent as a self-contained grouped package", async () => {
-    const added = await runOpenClaw([
-      "claws",
-      "add",
-      "src/claws/fixtures/workspace-agent.claw.json",
-      "--yes",
-      "--json",
-    ]);
+    const source = "src/claws/fixtures/workspace-agent.claw.json";
+    const addPreview = await runOpenClaw(["claws", "add", source, "--dry-run", "--json"]);
+    const addPlan = parseJson(addPreview.stdout) as { planIntegrity: string };
+    const added = await runOpenClaw(
+      ["claws", "add", source, "--yes", "--plan-integrity", addPlan.planIntegrity, "--json"],
+      { stateDir: addPreview.stateDir },
+    );
     const outputDirectory = join(added.stateDir, "exported-claw");
     const exported = await runOpenClaw(
       ["claws", "export", "workspace-agent", "--out", outputDirectory, "--json"],
@@ -303,7 +303,7 @@ describe("claws lifecycle cli e2e", () => {
     expect(JSON.parse(await readFile(join(outputDirectory, "package.json"), "utf8"))).toMatchObject(
       {
         name: "openclaw-claw-workspace-agent",
-        version: "0.0.0-development",
+        version: expect.stringMatching(/^0\.0\.0-export\.[0-9a-f]{12}$/),
         type: "module",
       },
     );
@@ -313,7 +313,26 @@ describe("claws lifecycle cli e2e", () => {
       source: { kind: "package" },
       manifest: { agent: { id: "workspace-agent" } },
     });
-    const roundTrip = await runOpenClaw(["claws", "add", outputDirectory, "--yes", "--json"]);
+    const roundTripPreview = await runOpenClaw([
+      "claws",
+      "add",
+      outputDirectory,
+      "--dry-run",
+      "--json",
+    ]);
+    const roundTripPlan = parseJson(roundTripPreview.stdout) as { planIntegrity: string };
+    const roundTrip = await runOpenClaw(
+      [
+        "claws",
+        "add",
+        outputDirectory,
+        "--yes",
+        "--plan-integrity",
+        roundTripPlan.planIntegrity,
+        "--json",
+      ],
+      { stateDir: roundTripPreview.stateDir },
+    );
     expect(parseJson(roundTrip.stdout)).toMatchObject({
       status: "complete",
       claw: { kind: "package" },

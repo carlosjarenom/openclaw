@@ -38,7 +38,9 @@ async function installedFixture() {
     version: "1.2.3",
     packageRoot: root,
     manifestPath: join(root, "openclaw.claw.json"),
+    integrityKind: "artifact",
     integrity: "sha256:manifest",
+    byteLength: 100,
   };
   const plan = await buildClawAddPlan({
     manifest: parsed.manifest,
@@ -47,6 +49,7 @@ async function installedFixture() {
   });
   let config: OpenClawConfig = {};
   await applyClawAddPlan(plan, {
+    consentPlanIntegrity: plan.planIntegrity,
     env: { OPENCLAW_STATE_DIR: join(root, "state") },
     commitConfig: async (transform) => {
       config = transform(config);
@@ -86,11 +89,12 @@ describe("exportClawAgent", () => {
         cronJobs: [],
       },
     });
-    expect(JSON.parse(await readFile(join(out, "package.json"), "utf8"))).toMatchObject({
-      name: "@acme/worker",
-      version: "1.2.3",
+    const packageJson = JSON.parse(await readFile(join(out, "package.json"), "utf8"));
+    expect(packageJson).toMatchObject({
+      name: "openclaw-claw-worker",
       openclaw: { claw: "openclaw.claw.json" },
     });
+    expect(packageJson.version).toMatch(/^0\.0\.0-export\.[0-9a-f]{12}$/);
     await expect(readFile(join(out, "workspace", "SOUL.md"), "utf8")).resolves.toBe(
       "managed soul\n",
     );
@@ -138,6 +142,21 @@ describe("exportClawAgent", () => {
     await expect(readFile(join(out, "workspace", "avatars", "worker.png"), "utf8")).resolves.toBe(
       "avatar bytes",
     );
+  });
+
+  it("omits a remote avatar from the portable agent", async () => {
+    const fixture = await installedFixture();
+    fixture.config.agents!.list![0] = {
+      ...fixture.config.agents!.list![0],
+      identity: { avatar: "https://example.com/worker.png" },
+    };
+
+    const result = await exportClawAgent("worker", join(fixture.root, "exported-remote-avatar"), {
+      env: fixture.env,
+      config: fixture.config,
+    });
+
+    expect(result.manifest.agent.identity?.avatar).toBeUndefined();
   });
 
   it("omits valid empty optional arrays", async () => {

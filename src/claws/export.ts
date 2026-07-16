@@ -134,7 +134,10 @@ function readPortableAvatar(params: {
   if (!source) {
     return {};
   }
-  if (isAvatarHttpUrl(source) || isAvatarDataUrl(source)) {
+  if (isAvatarHttpUrl(source)) {
+    return {};
+  }
+  if (isAvatarDataUrl(source)) {
     return { source };
   }
   const opened = openLocalAgentAvatarFile({
@@ -268,21 +271,9 @@ export async function exportClawAgent(
       await output.write(path, file.content, { mkdir: true, overwrite: false });
       filesWritten.push(path);
     }
-    const exactRecordedState =
-      record.install.status === "complete" &&
-      record.agentState === "present" &&
-      record.workspaceFiles.every((file) => file.state === "unchanged") &&
-      record.packages.every((pkg) => pkg.status === "complete") &&
-      (!agent.identity?.avatar?.trim() || Boolean(avatar.source)) &&
-      (!avatar.sidecar || managedPaths.has(avatar.sidecar.path));
-    const preservePackageName = exactRecordedState && record.install.claw.kind === "package";
     const packageJson = {
-      name: preservePackageName
-        ? record.install.claw.name
-        : `openclaw-claw-${record.install.agentId}`,
-      version: exactRecordedState
-        ? record.install.claw.version
-        : derivativePackageVersion(manifest, contents),
+      name: `openclaw-claw-${record.install.agentId}`,
+      version: derivativePackageVersion(manifest, contents),
       type: "module",
       openclaw: { claw: "openclaw.claw.json" },
     };
