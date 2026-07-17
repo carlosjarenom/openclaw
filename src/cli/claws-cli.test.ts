@@ -247,8 +247,23 @@ describe("claws cli", () => {
         unchanged: 0,
         manual: 0,
         blocked: 0,
+        capabilityChanges: 1,
+        capabilityEscalations: 1,
       },
       actions: [],
+      capabilityChanges: [
+        {
+          kind: "agent",
+          id: "demo-agent",
+          path: "agent.sandbox.mode",
+          action: "change",
+          classification: "escalation",
+          requiresDistinctConsent: true,
+          reason: "Agent capability field sandbox.mode changes in the target manifest.",
+          current: "non-main",
+          desired: "all",
+        },
+      ],
       blockers: [],
       diagnostics: [],
     });
@@ -683,6 +698,16 @@ describe("claws cli", () => {
     });
   });
 
+  it("prints capability escalation details in human update previews", async () => {
+    const { root } = await writePackage();
+
+    await runCli(["claws", "update", "demo-agent", "--from", root, "--dry-run"]);
+
+    const output = mocks.logs.join("\n");
+    expect(output).toContain("Capability changes: 1; escalations requiring distinct consent: 1");
+    expect(output).toContain("! agent.sandbox.mode: non-main -> all (change)");
+  });
+
   it("returns failure when an update plan contains blocked actions", async () => {
     const { root } = await writePackage();
     mocks.buildClawUpdatePlan.mockResolvedValueOnce({
@@ -702,7 +727,10 @@ describe("claws cli", () => {
         unchanged: 0,
         manual: 1,
         blocked: 1,
+        capabilityChanges: 0,
+        capabilityEscalations: 0,
       },
+      capabilityChanges: [],
       actions: [
         {
           kind: "workspaceFile",

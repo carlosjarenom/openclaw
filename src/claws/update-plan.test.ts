@@ -35,8 +35,20 @@ async function fixture() {
       files: [{ source: "OLD.md", path: "OLD.md" }],
     },
     packages: [
-      { kind: "skill", source: "clawhub", ref: "triage", version: "1.0.0" },
-      { kind: "plugin", source: "clawhub", ref: "obsolete", version: "1.0.0" },
+      {
+        kind: "skill",
+        source: "clawhub",
+        ref: "triage",
+        version: "1.0.0",
+        integrity: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      },
+      {
+        kind: "plugin",
+        source: "clawhub",
+        ref: "obsolete",
+        version: "1.0.0",
+        integrity: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      },
     ],
     mcpServers: { docs: { command: "uvx", args: ["docs-mcp"] } },
     cronJobs: [
@@ -217,14 +229,31 @@ describe("buildClawUpdatePlan", () => {
     await writeFile(join(current.root, "NEW.md"), "new\n", "utf8");
     const raw = {
       schemaVersion: 1,
-      agent: { id: "requested-id", name: "Worker v2" },
+      agent: {
+        id: "requested-id",
+        name: "Worker v2",
+        sandbox: { mode: "all", scope: "agent", workspaceAccess: "rw" },
+        tools: { allow: ["web.fetch"] },
+      },
       workspace: {
         bootstrapFiles: { "SOUL.md": { source: "SOUL-v2.md" } },
         files: [{ source: "NEW.md", path: "NEW.md" }],
       },
       packages: [
-        { kind: "skill", source: "clawhub", ref: "triage", version: "2.0.0" },
-        { kind: "plugin", source: "clawhub", ref: "new-plugin", version: "1.0.0" },
+        {
+          kind: "skill",
+          source: "clawhub",
+          ref: "triage",
+          version: "2.0.0",
+          integrity: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        },
+        {
+          kind: "plugin",
+          source: "clawhub",
+          ref: "new-plugin",
+          version: "1.0.0",
+          integrity: "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        },
       ],
       mcpServers: {
         docs: { command: "uvx", args: ["docs-mcp-v2"] },
@@ -273,7 +302,40 @@ describe("buildClawUpdatePlan", () => {
       unchanged: 0,
       manual: 0,
       blocked: 0,
+      capabilityEscalations: expect.any(Number),
     });
+    expect(plan.summary.capabilityEscalations).toBeGreaterThan(0);
+    expect(plan.capabilityChanges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "agent",
+          path: "agent.sandbox.mode",
+          desired: "all",
+          requiresDistinctConsent: true,
+        }),
+        expect.objectContaining({
+          kind: "agent",
+          path: "agent.tools.allow",
+          requiresDistinctConsent: true,
+        }),
+        expect.objectContaining({
+          kind: "package",
+          id: "plugin:new-plugin",
+          requiresDistinctConsent: true,
+        }),
+        expect.objectContaining({
+          kind: "mcpServer",
+          id: "search",
+          desired: expect.objectContaining({ transport: "streamable-http", auth: "oauth" }),
+          requiresDistinctConsent: true,
+        }),
+        expect.objectContaining({
+          kind: "cronJob",
+          id: "daily",
+          requiresDistinctConsent: true,
+        }),
+      ]),
+    );
     expect(plan.actions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: "agent", action: "change", id: "worker" }),
@@ -333,7 +395,13 @@ describe("buildClawUpdatePlan", () => {
         ...current.addPlan,
         agent: { ...current.addPlan.agent, finalId: "other-agent" },
       },
-      { kind: "plugin", source: "clawhub", ref: "audit", version: "0.9.0" },
+      {
+        kind: "plugin",
+        source: "clawhub",
+        ref: "audit",
+        version: "0.9.0",
+        integrity: "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      },
       { env: current.env },
     );
     const parsed = parseClawManifest({
@@ -347,7 +415,13 @@ describe("buildClawUpdatePlan", () => {
       },
       packages: [
         ...current.manifest.packages,
-        { kind: "plugin", source: "clawhub", ref: "audit", version: "1.0.0" },
+        {
+          kind: "plugin",
+          source: "clawhub",
+          ref: "audit",
+          version: "1.0.0",
+          integrity: "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        },
       ],
       mcpServers: {
         ...current.manifest.mcpServers,
@@ -494,7 +568,13 @@ describe("buildClawUpdatePlan", () => {
       packages: [
         current.manifest.packages[0],
         { ...current.manifest.packages[1], version: "2.0.0" },
-        { kind: "plugin", source: "clawhub", ref: "new-plugin", version: "1.0.0" },
+        {
+          kind: "plugin",
+          source: "clawhub",
+          ref: "new-plugin",
+          version: "1.0.0",
+          integrity: "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+        },
       ],
     });
     if (!parsed.ok) {

@@ -403,12 +403,32 @@ export async function runClawsStatusCommand(
   }
 }
 
+function formatCapabilityValue(value: unknown): string {
+  if (value === undefined) {
+    return "unset";
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
 function logClawUpdatePlanSummary(plan: ClawUpdatePlan, runtime: RuntimeEnv): void {
   runtime.log(`Agent: ${plan.agentId}`);
   runtime.log(`Update actions: ${plan.summary.totalActions}`);
   runtime.log(
     `Add: ${plan.summary.added}; change: ${plan.summary.changed}; remove: ${plan.summary.removed}; release: ${plan.summary.released}; unchanged: ${plan.summary.unchanged}; manual: ${plan.summary.manual}`,
   );
+  runtime.log(
+    `Capability changes: ${plan.summary.capabilityChanges}; escalations requiring distinct consent: ${plan.summary.capabilityEscalations}`,
+  );
+  for (const change of plan.capabilityChanges) {
+    const current = formatCapabilityValue(change.current);
+    const desired = formatCapabilityValue(change.desired);
+    runtime.log(
+      `  ${change.requiresDistinctConsent ? "!" : "-"} ${change.path}: ${current} -> ${desired} (${change.action})`,
+    );
+  }
   if (plan.blockers.length > 0) {
     runtime.error(formatDiagnostics(plan.blockers));
   }
@@ -471,9 +491,10 @@ export async function runClawsUpdateCommand(
     };
     if (database) {
       try {
-        const hasClawInstalls = database.db
-          .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'claw_installs'")
-          .get();
+        const hasClawInstalls =
+          database.db /* sqlite-allow-raw: read-only Claw install table-existence probe. */
+            .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'claw_installs'")
+            .get();
         if (hasClawInstalls) {
           status = await readClawStatus(target, {
             database,
@@ -551,7 +572,7 @@ export async function runClawsUpdateCommand(
     agentId: target,
     targetManifest: loaded.manifest,
     targetSource: loaded.source,
-    config: loadConfig(),
+    config: getRuntimeConfig(),
     sourceMcpServers: listedMcpServers.mcpServers,
     packagePreflight: preflightClawPackage,
     diagnostics: loaded.diagnostics,

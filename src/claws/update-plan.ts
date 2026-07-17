@@ -10,7 +10,7 @@ import {
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
 import { readClawStatus } from "./lifecycle-state.js";
-import { buildClawAddPlan, type ClawAddPlanContext } from "./lifecycle.js";
+import { buildClawAddPlan } from "./lifecycle.js";
 import { digestClawMcpServer, readClawMcpServerRefsByName } from "./mcp.js";
 import type { PackageRemovalDeps } from "./package-remove.js";
 import { readClawPackageRefs } from "./provenance.js";
@@ -18,46 +18,24 @@ import {
   CLAW_OUTPUT_STABILITY,
   type ClawDiagnostic,
   type ClawManifest,
+  type ClawPackage,
   type ClawSourceIdentity,
 } from "./types.js";
+import {
+  cronCapabilityChange,
+  mcpCapabilityChange,
+  packageCapabilityChange,
+  pushAgentCapabilityChanges,
+  type ClawUpdateCapabilityChange,
+} from "./update-capability-changes.js";
+import { makeEmptyClawUpdatePlan } from "./update-plan-empty.js";
+import {
+  CLAW_UPDATE_PLAN_SCHEMA_VERSION,
+  type ClawUpdateAction,
+  type ClawUpdatePlan,
+} from "./update-plan-types.js";
 
-export const CLAW_UPDATE_PLAN_SCHEMA_VERSION = "openclaw.clawUpdatePlan.v1" as const;
-
-export type ClawUpdateAction = {
-  kind: "agent" | "workspaceFile" | "package" | "mcpServer" | "cronJob";
-  id: string;
-  action: "add" | "change" | "remove" | "release" | "unchanged" | "manual";
-  target: string;
-  blocked: boolean;
-  reason: string;
-  currentDigest?: string;
-  desiredDigest?: string;
-};
-
-export type ClawUpdatePlan = {
-  schemaVersion: typeof CLAW_UPDATE_PLAN_SCHEMA_VERSION;
-  stability: typeof CLAW_OUTPUT_STABILITY;
-  dryRun: true;
-  mutationAllowed: false;
-  planIntegrity: string;
-  found: boolean;
-  agentId: string;
-  currentClaw?: { name: string; version: string; integrity: string };
-  targetClaw?: { name: string; version: string; integrity: string };
-  summary: {
-    totalActions: number;
-    added: number;
-    changed: number;
-    removed: number;
-    released: number;
-    unchanged: number;
-    manual: number;
-    blocked: number;
-  };
-  actions: ClawUpdateAction[];
-  blockers: ClawDiagnostic[];
-  diagnostics: ClawDiagnostic[];
-};
+export { CLAW_UPDATE_PLAN_SCHEMA_VERSION, type ClawUpdatePlan } from "./update-plan-types.js";
 
 function digest(value: unknown): string {
   return `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;
@@ -67,7 +45,10 @@ function diagnostic(code: string, path: string, message: string): ClawDiagnostic
   return { level: "error", code, phase: "plan", path, message };
 }
 
-function summarize(actions: ClawUpdateAction[]): ClawUpdatePlan["summary"] {
+function summarize(
+  actions: ClawUpdateAction[],
+  capabilityChanges: ClawUpdateCapabilityChange[],
+): ClawUpdatePlan["summary"] {
   return {
     totalActions: actions.length,
     added: actions.filter((action) => action.action === "add").length,
@@ -77,40 +58,10 @@ function summarize(actions: ClawUpdateAction[]): ClawUpdatePlan["summary"] {
     unchanged: actions.filter((action) => action.action === "unchanged").length,
     manual: actions.filter((action) => action.action === "manual").length,
     blocked: actions.filter((action) => action.blocked).length,
+    capabilityChanges: capabilityChanges.length,
+    capabilityEscalations: capabilityChanges.filter((change) => change.requiresDistinctConsent)
+      .length,
   };
-}
-
-function emptyPlan(params: {
-  agentId: string;
-  source?: ClawSourceIdentity;
-  currentClaw?: ClawUpdatePlan["currentClaw"];
-  found?: boolean;
-  blockers: ClawDiagnostic[];
-  diagnostics?: ClawDiagnostic[];
-}): ClawUpdatePlan {
-  const plan: Omit<ClawUpdatePlan, "planIntegrity"> = {
-    schemaVersion: CLAW_UPDATE_PLAN_SCHEMA_VERSION,
-    stability: CLAW_OUTPUT_STABILITY,
-    dryRun: true,
-    mutationAllowed: false,
-    found: params.found ?? false,
-    agentId: params.agentId,
-    ...(params.currentClaw ? { currentClaw: params.currentClaw } : {}),
-    ...(params.source
-      ? {
-          targetClaw: {
-            name: params.source.name,
-            version: params.source.version,
-            integrity: params.source.integrity,
-          },
-        }
-      : {}),
-    summary: summarize([]),
-    actions: [],
-    blockers: params.blockers,
-    diagnostics: params.diagnostics ?? [],
-  };
-  return { ...plan, planIntegrity: digest(plan) };
 }
 
 function manualState(state: string): boolean {
@@ -124,14 +75,20 @@ export async function buildClawUpdatePlan(params: {
   config: OpenClawConfig;
   sourceMcpServers: Record<string, Record<string, unknown>>;
   stateOptions?: OpenClawStateDatabaseOptions & { packageDeps?: PackageRemovalDeps };
-  packagePreflight?: ClawAddPlanContext["packagePreflight"];
+  packagePreflight?: (pkg: ClawPackage) => Promise<{
+    ok: boolean;
+    action?: "install" | "reuse";
+    code?: string;
+    message?: string;
+    installedVersion?: string;
+  }>;
   diagnostics?: ClawDiagnostic[];
 }): Promise<ClawUpdatePlan> {
   const ownsDatabase = !params.stateOptions?.database;
   const database =
     params.stateOptions?.database ?? openExistingOpenClawStateDatabaseReadOnly(params.stateOptions);
   if (!database) {
-    return emptyPlan({
+    return makeEmptyClawUpdatePlan({
       agentId: params.agentId,
       source: params.targetSource,
       blockers: [
@@ -142,17 +99,18 @@ export async function buildClawUpdatePlan(params: {
         ),
       ],
       diagnostics: params.diagnostics,
+      digest,
     });
   }
   if (
-    !database.db
+    !database.db /* sqlite-allow-raw: read-only Claw install table-existence probe. */
       .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'claw_installs'")
       .get()
   ) {
     if (ownsDatabase) {
       database.walMaintenance.close();
     }
-    return emptyPlan({
+    return makeEmptyClawUpdatePlan({
       agentId: params.agentId,
       source: params.targetSource,
       blockers: [
@@ -163,6 +121,7 @@ export async function buildClawUpdatePlan(params: {
         ),
       ],
       diagnostics: params.diagnostics,
+      digest,
     });
   }
   const readOnlyStateOptions: OpenClawStateDatabaseOptions & {
@@ -179,7 +138,7 @@ export async function buildClawUpdatePlan(params: {
       sourceMcpServers: params.sourceMcpServers,
     });
     if (status.records.length === 0) {
-      return emptyPlan({
+      return makeEmptyClawUpdatePlan({
         agentId: params.agentId,
         source: params.targetSource,
         blockers: [
@@ -190,10 +149,11 @@ export async function buildClawUpdatePlan(params: {
           ),
         ],
         diagnostics: params.diagnostics,
+        digest,
       });
     }
     if (status.records.length > 1) {
-      return emptyPlan({
+      return makeEmptyClawUpdatePlan({
         agentId: params.agentId,
         source: params.targetSource,
         found: true,
@@ -205,12 +165,13 @@ export async function buildClawUpdatePlan(params: {
           ),
         ],
         diagnostics: params.diagnostics,
+        digest,
       });
     }
     const record = status.records[0]!;
     const agentId = record.install.agentId;
     if (record.install.claw.name !== params.targetSource.name) {
-      return emptyPlan({
+      return makeEmptyClawUpdatePlan({
         agentId,
         source: params.targetSource,
         found: true,
@@ -227,6 +188,7 @@ export async function buildClawUpdatePlan(params: {
           ),
         ],
         diagnostics: params.diagnostics,
+        digest,
       });
     }
 
@@ -268,6 +230,7 @@ export async function buildClawUpdatePlan(params: {
         !entry.path.startsWith("$.packages"),
     );
     const actions: ClawUpdateAction[] = [];
+    const capabilityChanges: ClawUpdateCapabilityChange[] = [];
 
     const desiredAgentDigest = digest(targetPlan.agent.config);
     const agentAction =
@@ -294,6 +257,12 @@ export async function buildClawUpdatePlan(params: {
               : "Target manifest changes owned agent config.",
       currentDigest: record.install.agentConfigDigest,
       desiredDigest: desiredAgentDigest,
+    });
+    pushAgentCapabilityChanges({
+      changes: capabilityChanges,
+      agentId,
+      currentAgent: params.config.agents?.list?.find((agent) => agent.id === agentId),
+      desiredAgent: targetPlan.agent.config,
     });
 
     const targetFiles = new Map(
@@ -478,6 +447,14 @@ export async function buildClawUpdatePlan(params: {
         ...(current ? { currentDigest: digest(current) } : {}),
         desiredDigest: digest(target),
       });
+      const capabilityChange = packageCapabilityChange({
+        pkg: target,
+        action,
+        currentVersion: current?.version,
+      });
+      if (capabilityChange) {
+        capabilityChanges.push(capabilityChange);
+      }
       if (failedPackageMutationPreflight) {
         const index = params.targetManifest.packages.findIndex((pkg) => packageKey(pkg) === key);
         blockers.push(
@@ -492,10 +469,11 @@ export async function buildClawUpdatePlan(params: {
     for (const [key, current] of currentPackages) {
       if (!targetPackages.has(key)) {
         const manual = current.state === "incomplete";
+        const action = manual ? "manual" : "remove";
         actions.push({
           kind: "package",
           id: key,
-          action: manual ? "manual" : "remove",
+          action,
           target: `${current.source}:${current.ref}@${current.version}`,
           blocked: manual,
           reason: manual
@@ -503,6 +481,14 @@ export async function buildClawUpdatePlan(params: {
             : "Target manifest removes this Claw package reference without implying shared uninstall.",
           currentDigest: digest(current),
         });
+        const capabilityChange = packageCapabilityChange({
+          pkg: current,
+          action,
+          currentVersion: current.version,
+        });
+        if (capabilityChange) {
+          capabilityChanges.push(capabilityChange);
+        }
       }
     }
 
@@ -551,6 +537,15 @@ export async function buildClawUpdatePlan(params: {
         ...(current ? { currentDigest: current.configDigest } : {}),
         desiredDigest,
       });
+      const capabilityChange = mcpCapabilityChange({
+        id: name,
+        action,
+        current: current ? configuredMcpServers[name] : undefined,
+        desired: target,
+      });
+      if (capabilityChange) {
+        capabilityChanges.push(capabilityChange);
+      }
     }
     for (const current of record.mcpServers) {
       if (Object.hasOwn(params.targetManifest.mcpServers, current.name)) {
@@ -564,10 +559,11 @@ export async function buildClawUpdatePlan(params: {
         );
       const ownerAction =
         current.state === "present" && !sharedOrIndependent ? "remove" : "release";
+      const action = manual ? "manual" : ownerAction;
       actions.push({
         kind: "mcpServer",
         id: current.name,
-        action: manual ? "manual" : ownerAction,
+        action,
         target: `mcp.servers.${current.name}`,
         blocked: manual,
         reason: manual
@@ -577,6 +573,14 @@ export async function buildClawUpdatePlan(params: {
             : "Target manifest removes this solely owned MCP declaration.",
         currentDigest: current.configDigest,
       });
+      const capabilityChange = mcpCapabilityChange({
+        id: current.name,
+        action,
+        current: configuredMcpServers[current.name],
+      });
+      if (capabilityChange) {
+        capabilityChanges.push(capabilityChange);
+      }
     }
 
     const currentCron = new Map(record.cronJobs.map((cron) => [cron.manifestId, cron] as const));
@@ -606,16 +610,26 @@ export async function buildClawUpdatePlan(params: {
         ...(current ? { currentDigest: digest(current.job) } : {}),
         desiredDigest,
       });
+      const capabilityChange = cronCapabilityChange({
+        id: target.id,
+        action,
+        current: current?.job,
+        desired: target,
+      });
+      if (capabilityChange) {
+        capabilityChanges.push(capabilityChange);
+      }
     }
     for (const current of record.cronJobs) {
       if (params.targetManifest.cronJobs.some((cron) => cron.id === current.manifestId)) {
         continue;
       }
       const manual = current.status !== "complete" || !current.schedulerJobId;
+      const action = manual ? "manual" : "remove";
       actions.push({
         kind: "cronJob",
         id: current.manifestId,
-        action: manual ? "manual" : "remove",
+        action,
         target: current.schedulerJobId ?? current.declarationKey,
         blocked: manual,
         reason: manual
@@ -623,10 +637,23 @@ export async function buildClawUpdatePlan(params: {
           : "Target manifest removes this owned cron declaration.",
         currentDigest: digest(current.job),
       });
+      const capabilityChange = cronCapabilityChange({
+        id: current.manifestId,
+        action,
+        current: current.job,
+      });
+      if (capabilityChange) {
+        capabilityChanges.push(capabilityChange);
+      }
     }
 
     actions.sort((left, right) =>
       `${left.kind}:${left.id}`.localeCompare(`${right.kind}:${right.id}`),
+    );
+    capabilityChanges.sort((left, right) =>
+      `${left.kind}:${left.id}:${left.path}`.localeCompare(
+        `${right.kind}:${right.id}:${right.path}`,
+      ),
     );
     const plan: Omit<ClawUpdatePlan, "planIntegrity"> = {
       schemaVersion: CLAW_UPDATE_PLAN_SCHEMA_VERSION,
@@ -645,8 +672,9 @@ export async function buildClawUpdatePlan(params: {
         version: params.targetSource.version,
         integrity: params.targetSource.integrity,
       },
-      summary: summarize(actions),
+      summary: summarize(actions, capabilityChanges),
       actions,
+      capabilityChanges,
       blockers,
       diagnostics: params.diagnostics ?? [],
     };
