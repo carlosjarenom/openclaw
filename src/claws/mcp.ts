@@ -277,7 +277,7 @@ export async function installClawMcpServers(
   return refs;
 }
 
-function readClawMcpServerRefs(
+export function readClawMcpServerRefs(
   agentId: string,
   options: OpenClawStateDatabaseOptions = {},
 ): PersistedClawMcpServerRef[] {
