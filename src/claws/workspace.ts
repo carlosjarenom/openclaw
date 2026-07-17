@@ -85,22 +85,97 @@ function persistWorkspaceFile(
   }, options);
 }
 
+type PersistedClawWorkspaceFileRow = {
+  schema_version: string;
+  agent_id: string;
+  workspace: string;
+  target_path: string;
+  source_path: string;
+  content_digest: string;
+  status: string;
+  created_at_ms: number | bigint;
+  updated_at_ms: number | bigint;
+};
+
+function readWorkspaceFile(
+  agentId: string,
+  targetPath: string,
+  options: OpenClawStateDatabaseOptions,
+): PersistedClawWorkspaceFile | undefined {
+  return runOpenClawStateWriteTransaction(({ db }) => {
+    const statement = db /* sqlite-allow-raw: one owned Claw state-table row */
+      .prepare(
+        `SELECT schema_version, agent_id, workspace, target_path, source_path,
+              content_digest, status, created_at_ms, updated_at_ms
+         FROM claw_workspace_files
+        WHERE agent_id = ? AND target_path = ?`,
+      );
+    const row = statement.get(agentId, targetPath) as PersistedClawWorkspaceFileRow | undefined;
+    if (!row) {
+      return undefined;
+    }
+    if (
+      row.schema_version !== CLAW_WORKSPACE_FILE_RECORD_SCHEMA_VERSION ||
+      (row.status !== "pending" && row.status !== "complete" && row.status !== "failed")
+    ) {
+      throw new Error(
+        `Claw workspace file ${JSON.stringify(targetPath)} has unsupported provenance state.`,
+      );
+    }
+    return {
+      schemaVersion: CLAW_WORKSPACE_FILE_RECORD_SCHEMA_VERSION,
+      agentId: row.agent_id,
+      workspace: row.workspace,
+      path: row.target_path,
+      sourcePath: row.source_path,
+      contentDigest: row.content_digest,
+      status: row.status,
+      createdAtMs: Number(row.created_at_ms),
+      updatedAtMs: Number(row.updated_at_ms),
+    };
+  }, options);
+}
+
+function sameWorkspaceFileOwner(
+  existing: PersistedClawWorkspaceFile,
+  expected: PersistedClawWorkspaceFile,
+): boolean {
+  return (
+    existing.schemaVersion === expected.schemaVersion &&
+    existing.agentId === expected.agentId &&
+    existing.workspace === expected.workspace &&
+    existing.path === expected.path &&
+    existing.sourcePath === expected.sourcePath &&
+    existing.contentDigest === expected.contentDigest
+  );
+}
+
 function updateWorkspaceFileStatus(
   record: PersistedClawWorkspaceFile,
+  expectedStatuses: PersistedClawWorkspaceFile["status"][],
   options: OpenClawStateDatabaseOptions,
 ): void {
   runOpenClawStateWriteTransaction(({ db }) => {
-    // sqlite-allow-raw: this Claw prototype state-table write is scoped to one owned row.
-    db.prepare(
-      `UPDATE claw_workspace_files
-          SET status = @status, updated_at_ms = @updated_at_ms
-        WHERE agent_id = @agent_id AND target_path = @target_path`,
-    ).run({
-      agent_id: record.agentId,
-      target_path: record.path,
-      status: record.status,
-      updated_at_ms: record.updatedAtMs,
-    });
+    const expectedPlaceholders = expectedStatuses.map(() => "?").join(", ");
+    const statement = db /* sqlite-allow-raw: one owned Claw state-table row */
+      .prepare(
+        `UPDATE claw_workspace_files
+          SET status = ?, updated_at_ms = ?
+        WHERE agent_id = ? AND target_path = ?
+          AND status IN (${expectedPlaceholders})`,
+      );
+    const result = statement.run(
+      record.status,
+      record.updatedAtMs,
+      record.agentId,
+      record.path,
+      ...expectedStatuses,
+    );
+    if (Number(result.changes) !== 1) {
+      throw new Error(
+        `Claw workspace file ${JSON.stringify(record.path)} changed ownership state concurrently.`,
+      );
+    }
   }, options);
 }
 
@@ -192,19 +267,7 @@ export async function createClawWorkspaceFiles(
           createdFiles,
         );
       }
-      if (await workspace.exists(targetRelative)) {
-        throw new ClawWorkspaceWriteError(
-          [
-            diagnostic(
-              action,
-              "workspace_file_collision",
-              `Workspace destination ${JSON.stringify(targetRelative)} already exists.`,
-            ),
-          ],
-          createdFiles,
-        );
-      }
-      const record: PersistedClawWorkspaceFile = {
+      const expectedRecord: PersistedClawWorkspaceFile = {
         schemaVersion: CLAW_WORKSPACE_FILE_RECORD_SCHEMA_VERSION,
         agentId: plan.agent.finalId,
         workspace: workspace.rootReal,
@@ -215,24 +278,83 @@ export async function createClawWorkspaceFiles(
         createdAtMs: nowMs,
         updatedAtMs: nowMs,
       };
-      persistWorkspaceFile(record, options);
-      let wroteFile = false;
+      const existingRecord = readWorkspaceFile(
+        expectedRecord.agentId,
+        expectedRecord.path,
+        options,
+      );
+      if (existingRecord && !sameWorkspaceFileOwner(existingRecord, expectedRecord)) {
+        throw new ClawWorkspaceWriteError(
+          [
+            diagnostic(
+              action,
+              "workspace_file_ownership_conflict",
+              `Workspace destination ${JSON.stringify(targetRelative)} is already claimed by different Claw provenance.`,
+            ),
+          ],
+          createdFiles,
+        );
+      }
+      if (await workspace.exists(targetRelative)) {
+        if (!existingRecord) {
+          throw new ClawWorkspaceWriteError(
+            [
+              diagnostic(
+                action,
+                "workspace_file_collision",
+                `Workspace destination ${JSON.stringify(targetRelative)} already exists.`,
+              ),
+            ],
+            createdFiles,
+          );
+        }
+        const existingTarget = await workspace.read(targetRelative, {
+          hardlinks: "reject",
+          maxBytes: MAX_CLAW_WORKSPACE_FILE_BYTES,
+          symlinks: "reject",
+        });
+        if (contentDigest(existingTarget.buffer) !== expectedRecord.contentDigest) {
+          throw new ClawWorkspaceWriteError(
+            [
+              diagnostic(
+                action,
+                "workspace_file_drift",
+                `Claw-owned workspace destination ${JSON.stringify(targetRelative)} no longer matches its recorded content.`,
+              ),
+            ],
+            createdFiles,
+          );
+        }
+        const previousStatus = existingRecord.status;
+        existingRecord.status = "complete";
+        existingRecord.updatedAtMs = nowMs;
+        updateWorkspaceFileStatus(existingRecord, [previousStatus], options);
+        createdFiles.push(existingRecord);
+        continue;
+      }
+      const record = existingRecord ?? expectedRecord;
+      if (existingRecord) {
+        const previousStatus = record.status;
+        record.status = "pending";
+        record.updatedAtMs = nowMs;
+        updateWorkspaceFileStatus(record, [previousStatus], options);
+      } else {
+        persistWorkspaceFile(record, options);
+      }
       try {
         await workspace.write(targetRelative, read.buffer, { mkdir: true, overwrite: false });
-        wroteFile = true;
         record.status = "complete";
-        updateWorkspaceFileStatus(record, options);
+        updateWorkspaceFileStatus(record, ["pending"], options);
         createdFiles.push(record);
       } catch (error) {
         record.status = "failed";
-        if (wroteFile) {
-          createdFiles.push(record);
-        }
         try {
-          updateWorkspaceFileStatus(record, options);
+          updateWorkspaceFileStatus(record, ["pending"], options);
         } catch {
           // A pending row intentionally remains as evidence of uncertain owner state.
+          record.status = "pending";
         }
+        createdFiles.push(record);
         throw error;
       }
     } catch (error) {

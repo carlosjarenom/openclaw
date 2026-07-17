@@ -136,7 +136,7 @@ describe("createClawWorkspaceFiles", () => {
       }),
       expect.objectContaining({
         agentId: "workspace-agent",
-        path: join("reference", "policy.md"),
+        path: "reference/policy.md",
       }),
     ]);
     expect(readWorkspaceFileRows("workspace-agent", root)).toEqual(records);
@@ -231,6 +231,37 @@ describe("createClawWorkspaceFiles", () => {
     ]);
   });
 
+  it("resumes matching owned files without weakening create-only collision checks", async () => {
+    const { root, workspace, plan } = await makePlan();
+
+    const first = await createClawWorkspaceFiles(plan, { env: stateEnv(root), nowMs: 10 });
+    const resumed = await createClawWorkspaceFiles(plan, { env: stateEnv(root), nowMs: 20 });
+
+    expect(resumed).toHaveLength(first.length);
+    for (const [index, record] of resumed.entries()) {
+      const initial = first[index];
+      if (!initial) {
+        throw new Error(`missing initial workspace record at index ${index}`);
+      }
+      expect(record).toEqual({ ...initial, status: "complete", updatedAtMs: 20 });
+    }
+    await expect(readFile(join(workspace, "AGENTS.md"), "utf8")).resolves.toBe("# Agent\n");
+  });
+
+  it("fails closed when a previously owned destination drifts before resume", async () => {
+    const { root, workspace, plan } = await makePlan();
+    await createClawWorkspaceFiles(plan, { env: stateEnv(root), nowMs: 10 });
+    await writeFile(join(workspace, "AGENTS.md"), "operator edit\n", "utf8");
+
+    await expect(
+      createClawWorkspaceFiles(plan, { env: stateEnv(root), nowMs: 20 }),
+    ).rejects.toMatchObject({
+      diagnostics: [expect.objectContaining({ code: "workspace_file_drift" })],
+      createdFiles: [],
+    });
+    await expect(readFile(join(workspace, "AGENTS.md"), "utf8")).resolves.toBe("operator edit\n");
+  });
+
   it("rejects a tampered plan destination outside the new workspace", async () => {
     const { root, plan } = await makePlan();
     const action = plan.actions.find((candidate) => candidate.kind === "workspaceFile");
@@ -263,11 +294,11 @@ describe("workspace files in the consented add lifecycle", () => {
       status: "complete",
       workspaceFiles: [
         expect.objectContaining({ path: "AGENTS.md" }),
-        expect.objectContaining({ path: join("reference", "policy.md") }),
+        expect.objectContaining({ path: "reference/policy.md" }),
       ],
       installRecord: { status: "complete" },
     });
-    expect(config.agents?.list?.[0]?.id).toBe("workspace-agent");
+    expect(config.agents?.list?.some((agent) => agent.id === "workspace-agent")).toBe(true);
     expect(readInstallStatus("workspace-agent", root)).toBe("complete");
   });
 
@@ -298,7 +329,27 @@ describe("workspace files in the consented add lifecycle", () => {
         diagnostics: [expect.objectContaining({ code: "workspace_source_changed" })],
       },
     });
-    expect(config.agents?.list?.[0]?.id).toBe("workspace-agent");
+    expect(config.agents?.list?.some((agent) => agent.id === "workspace-agent")).toBe(true);
     expect(readInstallStatus("workspace-agent", root)).toBe("config_committed");
+
+    await writeFile(join(root, "content", "policy.md"), "Policy\n", "utf8");
+    const resumed = await applyClawAddPlan(plan, {
+      consentPlanIntegrity: plan.planIntegrity,
+      env: stateEnv(root),
+      nowMs: 50,
+      commitConfig: async (transform) => {
+        config = transform(config);
+      },
+    });
+
+    expect(resumed).toMatchObject({
+      status: "complete",
+      workspaceFiles: [
+        expect.objectContaining({ path: "AGENTS.md", status: "complete" }),
+        expect.objectContaining({ path: "reference/policy.md", status: "complete" }),
+      ],
+      installRecord: { status: "complete" },
+    });
+    expect(readInstallStatus("workspace-agent", root)).toBe("complete");
   });
 });

@@ -181,7 +181,7 @@ describe("claws lifecycle cli e2e", () => {
       workspaceFiles: [
         expect.objectContaining({ path: "SOUL.md" }),
         expect.objectContaining({ path: "HEARTBEAT.md" }),
-        expect.objectContaining({ path: join("reference", "policy.md") }),
+        expect.objectContaining({ path: "reference/policy.md" }),
       ],
       installRecord: { agentId: "workspace-agent", status: "complete" },
     });
