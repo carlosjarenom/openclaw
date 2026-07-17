@@ -16,6 +16,7 @@ import {
   fetchClawHubSkillInstallResolution,
   fetchClawHubSkillVerification,
   isDefaultClawHubBaseUrl,
+  normalizeClawHubSha256Integrity,
   reportClawHubSkillInstallTelemetry,
   resolveClawHubBaseUrl,
   searchClawHubSkills,
@@ -245,22 +246,32 @@ type ClawHubInstallParams = {
   config?: OpenClawConfig;
 };
 
-const SHA256_INTEGRITY_PATTERN = /^sha256:[a-f0-9]{64}$/;
-
-function assertExpectedArtifactIntegrity(expectedIntegrity: string | undefined): void {
-  if (expectedIntegrity !== undefined && !SHA256_INTEGRITY_PATTERN.test(expectedIntegrity)) {
+function normalizeExpectedArtifactIntegrity(expectedIntegrity: string): string;
+function normalizeExpectedArtifactIntegrity(expectedIntegrity: undefined): undefined;
+function normalizeExpectedArtifactIntegrity(
+  expectedIntegrity: string | undefined,
+): string | undefined;
+function normalizeExpectedArtifactIntegrity(
+  expectedIntegrity: string | undefined,
+): string | undefined {
+  if (expectedIntegrity === undefined) {
+    return undefined;
+  }
+  const normalized = normalizeClawHubSha256Integrity(expectedIntegrity);
+  if (!normalized) {
     throw new Error(`Invalid expected ClawHub archive integrity: ${expectedIntegrity}`);
   }
+  return normalized;
 }
 
 function assertDownloadedArtifactIntegrity(
   archive: ClawHubDownloadResult,
   expectedIntegrity: string | undefined,
 ): void {
-  assertExpectedArtifactIntegrity(expectedIntegrity);
-  if (expectedIntegrity && archive.integrity !== expectedIntegrity) {
+  const normalizedExpected = normalizeExpectedArtifactIntegrity(expectedIntegrity);
+  if (normalizedExpected && archive.integrity !== normalizedExpected) {
     throw new Error(
-      `ClawHub archive integrity mismatch: expected ${expectedIntegrity}, got ${archive.integrity}.`,
+      `ClawHub archive integrity mismatch: expected ${normalizedExpected}, got ${archive.integrity}.`,
     );
   }
 }
@@ -1331,7 +1342,7 @@ async function performClawHubSkillInstall(
   params: ClawHubInstallParams,
 ): Promise<InstallClawHubSkillResult> {
   try {
-    assertExpectedArtifactIntegrity(params.expectedIntegrity);
+    normalizeExpectedArtifactIntegrity(params.expectedIntegrity);
     const targetDir = resolveWorkspaceSkillInstallDir(params.workspaceDir, params.slug);
     const registry = resolveClawHubBaseUrl(params.baseUrl);
     const clawhubAuthority = isDefaultClawHubBaseUrl(params.baseUrl) ? "openclaw" : "third-party";
@@ -1672,13 +1683,13 @@ export async function preflightSkillFromClawHub(params: {
     }
 
     if (params.expectedIntegrity) {
-      assertExpectedArtifactIntegrity(params.expectedIntegrity);
+      const integrity = normalizeExpectedArtifactIntegrity(params.expectedIntegrity);
       return await preflightSkillOwnerState({
         workspaceDir: params.workspaceDir,
         requested,
         requestedLabel: params.slug,
         version: resolved.version,
-        integrity: params.expectedIntegrity,
+        integrity,
       });
     }
 
@@ -1689,7 +1700,8 @@ export async function preflightSkillFromClawHub(params: {
       baseUrl: params.baseUrl,
     });
     try {
-      if (!SHA256_INTEGRITY_PATTERN.test(archive.integrity)) {
+      const integrity = normalizeClawHubSha256Integrity(archive.integrity);
+      if (!integrity) {
         return {
           ok: false,
           code: "skill_integrity_unavailable",
@@ -1701,7 +1713,7 @@ export async function preflightSkillFromClawHub(params: {
         requested,
         requestedLabel: params.slug,
         version: resolved.version,
-        integrity: archive.integrity,
+        integrity,
       });
     } finally {
       await archive.cleanup().catch(() => undefined);

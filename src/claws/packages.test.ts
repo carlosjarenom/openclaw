@@ -66,7 +66,7 @@ const completePackageRef = vi.fn(
 
 describe("installClawPackages", () => {
   it("installs skill packages into the planned workspace with the resolved digest", async () => {
-    const integrity = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const integrity = `sha256-${Buffer.from("a".repeat(64), "hex").toString("base64")}`;
     const pending = { kind: "skill", ref: "@owner/triage", status: "pending", integrity };
     const installSkill = vi.fn().mockResolvedValue({
       ok: true,

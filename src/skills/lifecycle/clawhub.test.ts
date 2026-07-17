@@ -25,7 +25,8 @@ const evaluateSkillInstallPolicyMock = vi.fn();
 const pathExistsMock = vi.fn();
 const tempDirs = createTrackedTempDirs();
 
-vi.mock("../../infra/clawhub.js", () => ({
+vi.mock("../../infra/clawhub.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../infra/clawhub.js")>()),
   fetchClawHubSkillDetail: fetchClawHubSkillDetailMock,
   fetchClawHubSkillInstallResolution: fetchClawHubSkillInstallResolutionMock,
   fetchClawHubSkillVerification: fetchClawHubSkillVerificationMock,
@@ -326,7 +327,7 @@ describe("skills-clawhub", () => {
   });
 
   it("resolves an exact skill artifact without mutating the workspace", async () => {
-    const integrity = `sha256:${"a".repeat(64)}`;
+    const integrity = `sha256-${Buffer.from("a".repeat(64), "hex").toString("base64")}`;
     downloadClawHubSkillArchiveMock.mockResolvedValueOnce({
       archivePath: "/tmp/agentreceipt.zip",
       integrity,
@@ -349,7 +350,8 @@ describe("skills-clawhub", () => {
   });
 
   it("rejects a downloaded skill whose bytes do not match the consented plan", async () => {
-    const observed = `sha256:${"b".repeat(64)}`;
+    const observed = `sha256-${Buffer.from("b".repeat(64), "hex").toString("base64")}`;
+    const expected = `sha256-${Buffer.from("a".repeat(64), "hex").toString("base64")}`;
     downloadClawHubSkillArchiveMock.mockResolvedValueOnce({
       archivePath: "/tmp/agentreceipt.zip",
       integrity: observed,
@@ -367,7 +369,7 @@ describe("skills-clawhub", () => {
 
     expect(result).toEqual({
       ok: false,
-      error: `ClawHub archive integrity mismatch: expected sha256:${"a".repeat(64)}, got ${observed}.`,
+      error: `ClawHub archive integrity mismatch: expected ${expected}, got ${observed}.`,
     });
     expect(withExtractedArchiveRootMock).not.toHaveBeenCalled();
     expect(archiveCleanupMock).toHaveBeenCalledTimes(1);

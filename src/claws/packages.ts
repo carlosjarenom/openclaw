@@ -1,5 +1,6 @@
 import { runPluginInstallCommand } from "../cli/plugins-install-command.js";
 import { runPluginUninstallCommand } from "../cli/plugins-uninstall-command.js";
+import { normalizeClawHubSha256Integrity } from "../infra/clawhub.js";
 import { installPluginFromClawHub } from "../plugins/clawhub.js";
 import { preflightPluginInstall } from "../plugins/plugin-install-preflight.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
@@ -39,8 +40,6 @@ type PlannedClawPackage = ResolvedClawPackage & {
   ownerAction: "install" | "reuse";
   installId?: string;
 };
-const SHA256_INTEGRITY_PATTERN = /^sha256:[a-f0-9]{64}$/;
-
 function packageFromAction(action: ClawAddPlanAction): PlannedClawPackage {
   const details = action.details as
     | (Partial<ResolvedClawPackage> & {
@@ -56,7 +55,7 @@ function packageFromAction(action: ClawAddPlanAction): PlannedClawPackage {
     !details.ref ||
     !details.version ||
     !details.integrity ||
-    !SHA256_INTEGRITY_PATTERN.test(details.integrity)
+    !normalizeClawHubSha256Integrity(details.integrity)
   ) {
     throw new Error(
       `Package action ${JSON.stringify(action.id)} is not a pinned ClawHub package with integrity.`,
@@ -129,8 +128,10 @@ export async function preflightClawPackage(
   if (!probe.ok) {
     return { ok: false, code: probe.code ?? "plugin_preflight_failed", message: probe.error };
   }
-  const integrity = probe.clawhub.integrity;
-  if (!integrity || !SHA256_INTEGRITY_PATTERN.test(integrity)) {
+  const integrity = probe.clawhub.integrity
+    ? normalizeClawHubSha256Integrity(probe.clawhub.integrity)
+    : null;
+  if (!integrity) {
     return {
       ok: false,
       code: "plugin_integrity_unavailable",
@@ -139,7 +140,9 @@ export async function preflightClawPackage(
   }
   if (
     result.action === "reuse" &&
-    (result.installedId !== probe.pluginId || result.installedIntegrity !== integrity)
+    (result.installedId !== probe.pluginId ||
+      !result.installedIntegrity ||
+      normalizeClawHubSha256Integrity(result.installedIntegrity) !== integrity)
   ) {
     return {
       ok: false,
@@ -185,7 +188,11 @@ export async function installClawPackages(
         if (!preflight.ok) {
           throw new Error(preflight.error);
         }
-        if (preflight.action !== pkg.ownerAction || preflight.integrity !== pkg.integrity) {
+        if (
+          preflight.action !== pkg.ownerAction ||
+          normalizeClawHubSha256Integrity(preflight.integrity) !==
+            normalizeClawHubSha256Integrity(pkg.integrity)
+        ) {
           throw new ClawPackageInstallError(
             "package_owner_state_changed",
             `Skill ${pkg.ref}@${pkg.version} changed after planning; run add --dry-run again.`,
@@ -252,7 +259,9 @@ export async function installClawPackages(
       if (preflight.action === "reuse") {
         if (
           preflight.installedId !== pkg.installId ||
-          preflight.installedIntegrity !== pkg.integrity
+          !preflight.installedIntegrity ||
+          normalizeClawHubSha256Integrity(preflight.installedIntegrity) !==
+            normalizeClawHubSha256Integrity(pkg.integrity)
         ) {
           throw new ClawPackageInstallError(
             "package_owner_state_changed",
