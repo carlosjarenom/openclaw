@@ -221,6 +221,44 @@ describe("applyClawAddPlan", () => {
     await expect(access(plan.agent.workspace)).resolves.toBeUndefined();
   });
 
+  it("materializes the implicit main agent before appending the first configured agent", async () => {
+    const { root, plan } = await makePlan();
+    let config: OpenClawConfig = {};
+
+    await applyClawAddPlan(plan, {
+      consentPlanIntegrity: plan.planIntegrity,
+      env: stateEnv(root),
+      commitConfig: async (transform) => {
+        config = transform(config);
+      },
+    });
+
+    expect(config.agents?.list).toEqual([
+      { id: "main", default: true },
+      expect.objectContaining({ id: "worker" }),
+    ]);
+  });
+
+  it("rejects overlap with the implicit main workspace before materializing it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openclaw-claw-implicit-main-"));
+    const mainWorkspace = join(root, "main-workspace");
+    const { root: planRoot, plan } = await makePlan(undefined, {
+      workspace: join(mainWorkspace, "nested-claw"),
+    });
+
+    await expect(
+      applyClawAddPlan(plan, {
+        consentPlanIntegrity: plan.planIntegrity,
+        env: stateEnv(planRoot),
+        commitConfig: async (transform) => {
+          transform({ agents: { defaults: { workspace: mainWorkspace } } });
+        },
+      }),
+    ).rejects.toMatchObject({ code: "workspace_collision" });
+    await expect(access(plan.agent.workspace)).rejects.toThrow();
+    expect(readInstallRow("worker", planRoot)).toBeUndefined();
+  });
+
   it("rechecks agent collisions during the config commit and cleans the reserved workspace", async () => {
     const { plan } = await makePlan();
 
@@ -284,7 +322,7 @@ describe("applyClawAddPlan", () => {
       }),
     ).rejects.toMatchObject({ code: "workspace_path_changed" });
     await expect(access(join(alternateParent, "workspace-worker"))).rejects.toThrow();
-    expect(readInstallRow("worker", planRoot)?.status).toBe("partial");
+    expect(readInstallRow("worker", planRoot)).toBeUndefined();
   });
 
   it("records a partial add when the workspace appears after planning", async () => {
@@ -297,7 +335,7 @@ describe("applyClawAddPlan", () => {
         env: stateEnv(root),
       }),
     ).rejects.toMatchObject({ code: "workspace_collision" });
-    expect(readInstallRow("worker", root)?.status).toBe("partial");
+    expect(readInstallRow("worker", root)).toBeUndefined();
   });
 
   it("records parent-directory creation failures before workspace mutation", async () => {
@@ -314,7 +352,7 @@ describe("applyClawAddPlan", () => {
         env: stateEnv(root),
       }),
     ).rejects.toMatchObject({ code: "workspace_parent_failed" });
-    expect(readInstallRow("worker", root)?.status).toBe("partial");
+    expect(readInstallRow("worker", root)).toBeUndefined();
   });
 
   it("removes a new workspace when its durable phase cannot be recorded", async () => {
@@ -334,9 +372,9 @@ describe("applyClawAddPlan", () => {
       }),
     ).rejects.toMatchObject({ code: "provenance_failed" });
 
-    expect(statuses).toEqual(["workspace_ready", "partial"]);
+    expect(statuses).toEqual(["workspace_ready"]);
     await expect(access(plan.agent.workspace)).rejects.toThrow();
-    expect(readInstallRow("worker", root)?.status).toBe("pending");
+    expect(readInstallRow("worker", root)).toBeUndefined();
   });
 
   it("resumes a matching partial add with an existing non-empty workspace", async () => {

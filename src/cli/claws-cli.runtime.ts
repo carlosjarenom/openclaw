@@ -1,4 +1,5 @@
 import { listAgentIds, resolveAgentWorkspaceDir } from "../agents/agent-scope-config.js";
+import { stableStringify } from "../agents/stable-stringify.js";
 import {
   applyClawAddPlan,
   CLAW_ADD_RESULT_SCHEMA_VERSION,
@@ -189,7 +190,12 @@ export async function runClawsAddCommand(
   if (resumeRecord && plan.blockers.length > 0) {
     const canResumeWorkspace =
       resumeRecord.status === "workspace_ready" || resumeRecord.status === "config_committed";
-    const canResumeAgent = resumeRecord.status === "config_committed";
+    const committedAgent = config.agents?.list?.find(
+      (agent) => stableStringify(agent) === stableStringify(plan.agent.config),
+    );
+    const canResumeAgent =
+      resumeRecord.status === "config_committed" ||
+      (resumeRecord.status === "workspace_ready" && committedAgent !== undefined);
     plan = await buildClawAddPlan({
       manifest: result.manifest,
       source: result.source,

@@ -243,3 +243,25 @@ export function updateClawInstallRecordStatus(
     }
   }, options);
 }
+
+export function deleteClawInstallRecord(
+  agentId: string,
+  options: OpenClawStateDatabaseOptions & { expectedStatuses?: ClawInstallStatus[] } = {},
+): void {
+  runOpenClawStateWriteTransaction(({ db }) => {
+    const expectedStatuses = options.expectedStatuses ?? [];
+    const expectedClause =
+      expectedStatuses.length > 0
+        ? ` AND status IN (${expectedStatuses.map(() => "?").join(", ")})`
+        : "";
+    // sqlite-allow-raw: this Claw prototype state-table delete is scoped to one owned row.
+    const result = db
+      .prepare(`DELETE FROM claw_installs WHERE agent_id = ?${expectedClause}`)
+      .run(agentId, ...expectedStatuses);
+    if (result.changes !== 1) {
+      throw new Error(
+        `Claw install record for agent ${JSON.stringify(agentId)} did not match the expected phase.`,
+      );
+    }
+  }, options);
+}

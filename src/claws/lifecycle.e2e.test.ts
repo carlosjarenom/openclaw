@@ -108,7 +108,7 @@ describe("claws lifecycle cli e2e", () => {
     expect(result.code).toBe(1);
   });
 
-  it("creates exactly one agent and root install record after explicit consent", async () => {
+  it("preserves implicit main and creates exactly one agent after explicit consent", async () => {
     const preview = await runOpenClaw([
       "claws",
       "add",
@@ -141,6 +141,7 @@ describe("claws lifecycle cli e2e", () => {
     });
     const config = JSON.parse(await readFile(join(result.stateDir, "openclaw.json"), "utf8"));
     expect(config.agents.list).toEqual([
+      { id: "main", default: true },
       expect.objectContaining({
         id: "internal-triage",
         name: "Internal Triage",

@@ -7,9 +7,11 @@ import { transformConfigFileWithRetry } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import { normalizeWindowsPathForComparison } from "../infra/path-guards.js";
+import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import { resolveUserPath } from "../utils.js";
 import {
+  deleteClawInstallRecord,
   persistClawInstallRecord,
   updateClawInstallRecordStatus,
   type ClawInstallStatus,
@@ -24,6 +26,7 @@ type ClawAddApplyOptions = OpenClawStateDatabaseOptions & {
   consentPlanIntegrity?: string;
   commitConfig?: ConfigCommit;
   persistRecord?: typeof persistClawInstallRecord;
+  deleteRecord?: typeof deleteClawInstallRecord;
   updateRecord?: typeof updateClawInstallRecordStatus;
   nowMs?: number;
 };
@@ -76,6 +79,17 @@ function markInstallStatus(
   options: ClawAddApplyOptions,
 ): void {
   (options.updateRecord ?? updateClawInstallRecordStatus)(agentId, status, {
+    ...options,
+    expectedStatuses,
+  });
+}
+
+function clearUnownedInstallRecord(
+  agentId: string,
+  expectedStatuses: ClawInstallStatus[],
+  options: ClawAddApplyOptions,
+): void {
+  (options.deleteRecord ?? deleteClawInstallRecord)(agentId, {
     ...options,
     expectedStatuses,
   });
@@ -156,7 +170,7 @@ export async function applyClawAddPlan(
     await mkdir(dirname(workspace), { recursive: true });
     assertWorkspacePathUnchanged(workspace);
   } catch (error) {
-    markInstallStatus(plan.agent.finalId, "partial", ["pending", "partial"], options);
+    clearUnownedInstallRecord(plan.agent.finalId, ["pending", "partial"], options);
     if (error instanceof ClawAddMutationError) {
       throw error;
     }
@@ -171,7 +185,7 @@ export async function applyClawAddPlan(
       await mkdir(workspace);
       workspaceCreated = true;
     } catch (error) {
-      markInstallStatus(plan.agent.finalId, "partial", ["pending", "partial"], options);
+      clearUnownedInstallRecord(plan.agent.finalId, ["pending", "partial"], options);
       throw new ClawAddMutationError(
         "workspace_collision",
         `Could not create new workspace ${JSON.stringify(workspace)}: ${(error as Error).message}`,
@@ -193,9 +207,9 @@ export async function applyClawAddPlan(
         .catch(() => false);
       if (removedWorkspace) {
         try {
-          markInstallStatus(plan.agent.finalId, "partial", ["pending", "partial"], options);
+          clearUnownedInstallRecord(plan.agent.finalId, ["pending", "partial"], options);
         } catch {
-          // Preserve the phase-write failure; a pending row plus no workspace is safe to retry.
+          // Preserve the phase-write failure if the unowned attempt cannot be reconciled.
         }
       }
       throw new ClawAddMutationError("provenance_failed", (error as Error).message);
@@ -213,7 +227,13 @@ export async function applyClawAddPlan(
       });
     await commit((config) => {
       const existingAgents = config.agents?.list ?? [];
-      const existingAgent = existingAgents.find((agent) => agent.id === plan.agent.finalId);
+      const agentsToPreserve: AgentConfig[] =
+        existingAgents.length > 0 ? existingAgents : [{ id: DEFAULT_AGENT_ID, default: true }];
+      const configWithPreservedAgents: OpenClawConfig = {
+        ...config,
+        agents: { ...config.agents, list: agentsToPreserve },
+      };
+      const existingAgent = agentsToPreserve.find((agent) => agent.id === plan.agent.finalId);
       if (existingAgent) {
         if (sameCommittedAgent(existingAgent, plan)) {
           configCommitted = true;
@@ -224,7 +244,10 @@ export async function applyClawAddPlan(
           `Agent ${JSON.stringify(plan.agent.finalId)} was created after planning.`,
         );
       }
-      if (findOverlappingWorkspaceAgentIds(config, plan.agent.finalId, workspace).length > 0) {
+      if (
+        findOverlappingWorkspaceAgentIds(configWithPreservedAgents, plan.agent.finalId, workspace)
+          .length > 0
+      ) {
         throw new ClawAddMutationError(
           "workspace_collision",
           `Workspace ${JSON.stringify(workspace)} is already assigned to an agent.`,
@@ -234,7 +257,7 @@ export async function applyClawAddPlan(
         ...config,
         agents: {
           ...config.agents,
-          list: [...existingAgents, plan.agent.config],
+          list: [...agentsToPreserve, plan.agent.config],
         },
       };
       configCommitted = true;
@@ -252,7 +275,7 @@ export async function applyClawAddPlan(
         .then(() => true)
         .catch(() => false);
       if (removedWorkspace) {
-        markInstallStatus(plan.agent.finalId, "partial", ["workspace_ready", "partial"], options);
+        clearUnownedInstallRecord(plan.agent.finalId, ["workspace_ready", "partial"], options);
       }
     }
     throw error;

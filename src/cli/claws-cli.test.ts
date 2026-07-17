@@ -279,6 +279,40 @@ describe("claws cli", () => {
     expect(mocks.runtime.exit).not.toHaveBeenCalled();
   });
 
+  it("resumes when config committed before the workspace-ready phase advanced", async () => {
+    const manifestPath = await writeManifest();
+    const workspace = join(await mkdtemp(join(tmpdir(), "openclaw-claws-add-")), "workspace");
+    const stateRoot = await mkdtemp(join(tmpdir(), "openclaw-claws-state-"));
+    vi.stubEnv("OPENCLAW_STATE_DIR", join(stateRoot, "state"));
+
+    await runCli(["claws", "add", manifestPath, "--dry-run", "--workspace", workspace, "--json"]);
+    const plan = JSON.parse(mocks.logs[0] ?? "{}");
+    persistClawInstallRecord(plan, { status: "workspace_ready", nowMs: 1 });
+    await mkdir(workspace);
+    mocks.logs.length = 0;
+    mocks.runtime.exit.mockClear();
+    mocks.applyClawAddPlan.mockClear();
+    mocks.loadConfig.mockReturnValue({ agents: { list: [plan.agent.config] } });
+
+    await runCli([
+      "claws",
+      "add",
+      manifestPath,
+      "--yes",
+      "--plan-integrity",
+      plan.planIntegrity,
+      "--workspace",
+      workspace,
+      "--json",
+    ]);
+
+    expect(mocks.applyClawAddPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ planIntegrity: plan.planIntegrity, blockers: [] }),
+      { consentPlanIntegrity: plan.planIntegrity },
+    );
+    expect(mocks.runtime.exit).not.toHaveBeenCalled();
+  });
+
   it("does not claim an on-disk workspace for a partial record without workspace ownership", async () => {
     const manifestPath = await writeManifest();
     const workspace = join(await mkdtemp(join(tmpdir(), "openclaw-claws-add-")), "workspace");
