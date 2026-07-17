@@ -312,6 +312,39 @@ describe("claws cli", () => {
     expect(mocks.runtime.exit).toHaveBeenCalledWith(1);
   });
 
+  it("preserves a real agent collision while an add is still pending", async () => {
+    const manifestPath = await writeManifest();
+    const workspace = join(await mkdtemp(join(tmpdir(), "openclaw-claws-add-")), "workspace");
+    const stateRoot = await mkdtemp(join(tmpdir(), "openclaw-claws-state-"));
+    vi.stubEnv("OPENCLAW_STATE_DIR", join(stateRoot, "state"));
+
+    await runCli(["claws", "add", manifestPath, "--dry-run", "--workspace", workspace, "--json"]);
+    const plan = JSON.parse(mocks.logs[0] ?? "{}");
+    persistClawInstallRecord(plan, { status: "pending", nowMs: 1 });
+    mocks.logs.length = 0;
+    mocks.runtime.exit.mockClear();
+    mocks.applyClawAddPlan.mockClear();
+    mocks.loadConfig.mockReturnValue({ agents: { list: [{ id: "demo-agent", workspace }] } });
+
+    await runCli([
+      "claws",
+      "add",
+      manifestPath,
+      "--yes",
+      "--plan-integrity",
+      plan.planIntegrity,
+      "--workspace",
+      workspace,
+      "--json",
+    ]);
+
+    expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
+      blockers: expect.arrayContaining([expect.objectContaining({ code: "agent_id_collision" })]),
+    });
+    expect(mocks.applyClawAddPlan).not.toHaveBeenCalled();
+    expect(mocks.runtime.exit).toHaveBeenCalledWith(1);
+  });
+
   it("does not resume through another agent's configured workspace", async () => {
     const manifestPath = await writeManifest();
     const workspace = join(await mkdtemp(join(tmpdir(), "openclaw-claws-add-")), "workspace");

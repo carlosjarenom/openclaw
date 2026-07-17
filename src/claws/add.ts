@@ -5,6 +5,8 @@ import { findOverlappingWorkspaceAgentIds } from "../agents/agent-delete-safety.
 import { stableStringify } from "../agents/stable-stringify.js";
 import { transformConfigFileWithRetry } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
+import { normalizeWindowsPathForComparison } from "../infra/path-guards.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import { resolveUserPath } from "../utils.js";
 import {
@@ -83,6 +85,20 @@ function sameCommittedAgent(existingAgent: AgentConfig, plan: ClawAddPlan): bool
   return stableStringify(existingAgent) === stableStringify(plan.agent.config);
 }
 
+function workspacePathKey(value: string): string {
+  return process.platform === "win32" ? normalizeWindowsPathForComparison(value) : value;
+}
+
+function assertWorkspacePathUnchanged(workspace: string): void {
+  const canonicalWorkspace = resolvePathViaExistingAncestorSync(workspace);
+  if (workspacePathKey(canonicalWorkspace) !== workspacePathKey(workspace)) {
+    throw new ClawAddMutationError(
+      "workspace_path_changed",
+      `Workspace ancestry changed after planning: expected ${JSON.stringify(workspace)}, resolved ${JSON.stringify(canonicalWorkspace)}.`,
+    );
+  }
+}
+
 export async function applyClawAddPlan(
   plan: ClawAddPlan,
   options: ClawAddApplyOptions = {},
@@ -136,9 +152,14 @@ export async function applyClawAddPlan(
   let configCommitted = statusAtLeast(installRecord.status, "config_committed");
 
   try {
+    assertWorkspacePathUnchanged(workspace);
     await mkdir(dirname(workspace), { recursive: true });
+    assertWorkspacePathUnchanged(workspace);
   } catch (error) {
     markInstallStatus(plan.agent.finalId, "partial", ["pending", "partial"], options);
+    if (error instanceof ClawAddMutationError) {
+      throw error;
+    }
     throw new ClawAddMutationError(
       "workspace_parent_failed",
       `Could not create parent directory for workspace ${JSON.stringify(workspace)}: ${(error as Error).message}`,

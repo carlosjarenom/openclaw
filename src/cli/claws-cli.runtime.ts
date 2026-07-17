@@ -187,21 +187,24 @@ export async function runClawsAddCommand(
   });
   const resumeRecord = matchingResumeRecord(plan, opts);
   if (resumeRecord && plan.blockers.length > 0) {
-    const resumableWorkspace =
-      resumeRecord.status === "workspace_ready" || resumeRecord.status === "config_committed"
-        ? resumeRecord.workspace
-        : undefined;
+    const canResumeWorkspace =
+      resumeRecord.status === "workspace_ready" || resumeRecord.status === "config_committed";
+    const canResumeAgent = resumeRecord.status === "config_committed";
     plan = await buildClawAddPlan({
       manifest: result.manifest,
       source: result.source,
       diagnostics: result.diagnostics,
       context: {
         ...basePlanContext,
-        existingAgentIds: existingAgentIds.filter((agentId) => agentId !== resumeRecord.agentId),
-        existingWorkspacePaths: existingAgentIds
-          .filter((agentId) => agentId !== resumeRecord.agentId)
-          .map((agentId) => resolveAgentWorkspaceDir(config, agentId)),
-        ...(resumableWorkspace ? { resumableWorkspace } : {}),
+        existingAgentIds: canResumeAgent
+          ? existingAgentIds.filter((agentId) => agentId !== resumeRecord.agentId)
+          : existingAgentIds,
+        existingWorkspacePaths: canResumeWorkspace
+          ? existingAgentIds
+              .filter((agentId) => agentId !== resumeRecord.agentId)
+              .map((agentId) => resolveAgentWorkspaceDir(config, agentId))
+          : existingWorkspacePaths,
+        ...(canResumeWorkspace ? { resumableWorkspace: resumeRecord.workspace } : {}),
       },
     });
   }

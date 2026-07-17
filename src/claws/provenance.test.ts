@@ -1,5 +1,5 @@
 // Tests root Claw install ownership and the narrow agent/workspace mutation slice.
-import { access, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rmdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -259,6 +259,32 @@ describe("applyClawAddPlan", () => {
       }),
     ).rejects.toMatchObject({ code: "workspace_collision" });
     await expect(access(plan.agent.workspace)).rejects.toThrow();
+  });
+
+  it("rejects workspace ancestry changes after planning", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openclaw-claw-workspace-swap-"));
+    const canonicalParent = join(root, "canonical");
+    const alternateParent = join(root, "alternate");
+    await mkdir(canonicalParent);
+    await mkdir(alternateParent);
+    const { root: planRoot, plan } = await makePlan(undefined, {
+      workspace: join(canonicalParent, "workspace-worker"),
+    });
+    await rmdir(canonicalParent);
+    await symlink(
+      alternateParent,
+      canonicalParent,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    await expect(
+      applyClawAddPlan(plan, {
+        consentPlanIntegrity: plan.planIntegrity,
+        env: stateEnv(planRoot),
+      }),
+    ).rejects.toMatchObject({ code: "workspace_path_changed" });
+    await expect(access(join(alternateParent, "workspace-worker"))).rejects.toThrow();
+    expect(readInstallRow("worker", planRoot)?.status).toBe("partial");
   });
 
   it("records a partial add when the workspace appears after planning", async () => {

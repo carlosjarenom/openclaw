@@ -157,6 +157,8 @@ export function persistClawInstallRecord(
       ) {
         return rowToRecord(existing);
       }
+      // A nonmatching partial attempt remains durable ownership evidence. A later
+      // remove/doctor lifecycle must clear it; a new plan must never overwrite it.
       throw new Error(
         `Claw install record for agent ${JSON.stringify(plan.agent.finalId)} already exists.`,
       );
