@@ -228,14 +228,14 @@ export function updateClawInstallRecordStatus(
       expectedStatuses.length > 0
         ? ` AND status IN (${expectedStatuses.map(() => "?").join(", ")})`
         : "";
-    // sqlite-allow-raw: this Claw prototype state-table write is scoped to one owned row.
-    const result = db
-      .prepare(
-        `UPDATE claw_installs
+    const result =
+      db /* sqlite-allow-raw: this Claw prototype state-table write is scoped to one owned row. */
+        .prepare(
+          `UPDATE claw_installs
             SET status = ?, updated_at_ms = ?
           WHERE agent_id = ?${expectedClause}`,
-      )
-      .run(status, options.nowMs ?? Date.now(), agentId, ...expectedStatuses);
+        )
+        .run(status, options.nowMs ?? Date.now(), agentId, ...expectedStatuses);
     if (result.changes !== 1) {
       throw new Error(
         `Claw install record for agent ${JSON.stringify(agentId)} did not match the expected phase.`,
@@ -254,10 +254,10 @@ export function deleteClawInstallRecord(
       expectedStatuses.length > 0
         ? ` AND status IN (${expectedStatuses.map(() => "?").join(", ")})`
         : "";
-    // sqlite-allow-raw: this Claw prototype state-table delete is scoped to one owned row.
-    const result = db
-      .prepare(`DELETE FROM claw_installs WHERE agent_id = ?${expectedClause}`)
-      .run(agentId, ...expectedStatuses);
+    const result =
+      db /* sqlite-allow-raw: this Claw prototype state-table delete is scoped to one owned row. */
+        .prepare(`DELETE FROM claw_installs WHERE agent_id = ?${expectedClause}`)
+        .run(agentId, ...expectedStatuses);
     if (result.changes !== 1) {
       throw new Error(
         `Claw install record for agent ${JSON.stringify(agentId)} did not match the expected phase.`,
