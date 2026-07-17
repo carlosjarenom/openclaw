@@ -351,6 +351,54 @@ describe("applyClawAddPlan", () => {
     expect(readInstallRow("worker", root)?.status).toBe("complete");
   });
 
+  it("recreates a missing workspace for a matching workspace-ready record", async () => {
+    const { root, plan } = await makePlan();
+    persistClawInstallRecord(plan, {
+      env: stateEnv(root),
+      status: "workspace_ready",
+      nowMs: 1,
+    });
+    let config: OpenClawConfig = {};
+
+    const result = await applyClawAddPlan(plan, {
+      consentPlanIntegrity: plan.planIntegrity,
+      env: stateEnv(root),
+      commitConfig: async (transform) => {
+        config = transform(config);
+      },
+    });
+
+    expect(result.status).toBe("complete");
+    await expect(access(plan.agent.workspace)).resolves.toBeUndefined();
+    expect(config.agents?.list).toContainEqual(expect.objectContaining({ id: "worker" }));
+  });
+
+  it("rejects a non-directory replacement for a workspace-ready record", async () => {
+    const { root, plan } = await makePlan();
+    persistClawInstallRecord(plan, {
+      env: stateEnv(root),
+      status: "workspace_ready",
+      nowMs: 1,
+    });
+    await writeFile(plan.agent.workspace, "not a directory", "utf8");
+    let config: OpenClawConfig = {};
+
+    await expect(
+      applyClawAddPlan(plan, {
+        consentPlanIntegrity: plan.planIntegrity,
+        env: stateEnv(root),
+        commitConfig: async (transform) => {
+          config = transform(config);
+        },
+      }),
+    ).rejects.toMatchObject({ code: "workspace_collision" });
+
+    expect(config.agents?.list).toBeUndefined();
+    expect(readClawInstallRecord("worker", { env: stateEnv(root) })?.status).toBe(
+      "workspace_ready",
+    );
+  });
+
   it("blocks declared components that this lifecycle slice cannot yet create", async () => {
     const { plan } = await makePlan({
       schemaVersion: 1,

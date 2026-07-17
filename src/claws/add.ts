@@ -1,5 +1,5 @@
 // Applies the narrow agent/workspace creation slice of a consented Claw add plan.
-import { mkdir, rmdir } from "node:fs/promises";
+import { lstat, mkdir, rmdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { findOverlappingWorkspaceAgentIds } from "../agents/agent-delete-safety.js";
 import { stableStringify } from "../agents/stable-stringify.js";
@@ -112,7 +112,27 @@ export async function applyClawAddPlan(
   }
 
   const workspace = resolve(resolveUserPath(plan.agent.workspace));
-  let workspaceCreated = statusAtLeast(installRecord.status, "workspace_ready");
+  const workspacePhaseRecorded = statusAtLeast(installRecord.status, "workspace_ready");
+  const workspaceState = workspacePhaseRecorded
+    ? await lstat(workspace).catch((error: unknown) => {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "ENOENT"
+        ) {
+          return undefined;
+        }
+        throw error;
+      })
+    : undefined;
+  if (workspaceState && !workspaceState.isDirectory()) {
+    throw new ClawAddMutationError(
+      "workspace_collision",
+      `Workspace ${JSON.stringify(workspace)} is no longer a directory.`,
+    );
+  }
+  let workspaceCreated = workspaceState?.isDirectory() ?? false;
   let configCommitted = statusAtLeast(installRecord.status, "config_committed");
 
   try {
@@ -138,12 +158,14 @@ export async function applyClawAddPlan(
     }
 
     try {
-      markInstallStatus(
-        plan.agent.finalId,
-        "workspace_ready",
-        ["pending", "partial", "workspace_ready"],
-        options,
-      );
+      if (!workspacePhaseRecorded) {
+        markInstallStatus(
+          plan.agent.finalId,
+          "workspace_ready",
+          ["pending", "partial", "workspace_ready"],
+          options,
+        );
+      }
     } catch (error) {
       const removedWorkspace = await rmdir(workspace)
         .then(() => true)
