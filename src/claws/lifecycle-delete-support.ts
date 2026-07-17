@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -13,11 +14,13 @@ import {
 } from "../agents/workspace-state-store.js";
 import { pruneAgentConfig } from "../commands/agents.config.js";
 import { moveToTrash } from "../commands/onboard-helpers.js";
+import { root as fsSafeRoot, FsSafeError } from "../infra/fs-safe.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { RuntimeEnv } from "../runtime.js";
 import {
   openOpenClawStateDatabase,
+  runOpenClawStateWriteTransaction,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
 import type { PersistedClawInstall } from "./provenance.js";
@@ -271,3 +274,81 @@ export const clawRemoveQuietRuntime: RuntimeEnv = {
     throw new Error(`Unexpected exit during Claw removal cleanup: ${code ?? 1}`);
   },
 };
+
+type ClawRemovableWorkspaceFile = PersistedClawWorkspaceFile & {
+  state: "unchanged" | "modified" | "missing" | "unsafe";
+  message?: string;
+};
+
+export type RemovedWorkspaceFile = {
+  path: string;
+  action: "deleted" | "missing" | "retainedModified" | "error";
+  message?: string;
+};
+
+export async function removeClawWorkspaceFile(
+  record: ClawRemovableWorkspaceFile,
+): Promise<RemovedWorkspaceFile> {
+  if (record.state === "missing") {
+    return { path: record.path, action: "missing" };
+  }
+  if (record.state === "modified") {
+    return { path: record.path, action: "retainedModified" };
+  }
+  try {
+    const workspace = await fsSafeRoot(record.workspace, {
+      hardlinks: "reject",
+      maxBytes: 1024 * 1024,
+      symlinks: "reject",
+    });
+    if (!(await workspace.exists(record.path))) {
+      return { path: record.path, action: "missing" };
+    }
+    const stagedPath = `${record.path}.openclaw-claw-remove-${randomUUID()}`;
+    await workspace.move(record.path, stagedPath, { overwrite: false });
+    const content = await workspace.readBytes(stagedPath, { maxBytes: 1024 * 1024 });
+    const digest = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+    if (digest !== record.contentDigest) {
+      await workspace.move(stagedPath, record.path, { overwrite: false });
+      return { path: record.path, action: "retainedModified" };
+    }
+    await workspace.remove(stagedPath);
+    return { path: record.path, action: "deleted" };
+  } catch (error) {
+    return {
+      path: record.path,
+      action: "error",
+      message: error instanceof FsSafeError ? `${error.code}: ${error.message}` : String(error),
+    };
+  }
+}
+
+export function releaseClawRemoveRows(
+  agentId: string,
+  files: RemovedWorkspaceFile[],
+  complete: boolean,
+  options: OpenClawStateDatabaseOptions,
+): void {
+  runOpenClawStateWriteTransaction(({ db }) => {
+    if (tableExists(db, "claw_workspace_files")) {
+      for (const file of files.filter((candidate) => candidate.action !== "error")) {
+        db /* sqlite-allow-raw: remove one owned Claw workspace-file row. */
+          .prepare("DELETE FROM claw_workspace_files WHERE agent_id = ? AND target_path = ?")
+          .run(agentId, file.path);
+      }
+    }
+    if (!complete) {
+      return;
+    }
+    if (tableExists(db, "claw_package_refs")) {
+      db /* sqlite-allow-raw: release package refs for a removed Claw agent. */
+        .prepare("DELETE FROM claw_package_refs WHERE agent_id = ?")
+        .run(agentId);
+    }
+    if (tableExists(db, "claw_installs")) {
+      db /* sqlite-allow-raw: remove the completed Claw install owner row. */
+        .prepare("DELETE FROM claw_installs WHERE agent_id = ?")
+        .run(agentId);
+    }
+  }, options);
+}
