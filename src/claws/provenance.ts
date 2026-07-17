@@ -7,7 +7,7 @@ import {
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
-import type { ClawAddPlan, ClawPackage } from "./types.js";
+import type { ClawAddPlan, ClawPackage, ResolvedClawPackage } from "./types.js";
 
 const CLAW_INSTALL_RECORD_SCHEMA_VERSION = "openclaw.clawInstallRecord.v1" as const;
 
@@ -267,7 +267,7 @@ export function deleteClawInstallRecord(
 }
 
 const CLAW_PACKAGE_REF_SCHEMA_VERSION = "openclaw.clawPackageRef.v1" as const;
-type ClawPackageRefStatus = "pending" | "complete" | "failed";
+type ClawPackageRefStatus = "pending" | "complete" | "failed" | "rolled_back";
 type ClawPackageOwnership = "claw-installed" | "independently-owned";
 
 export type PersistedClawPackageRef = {
@@ -319,7 +319,7 @@ function rowToPackageRef(row: PackageRefRow): PersistedClawPackageRef {
 
 export function persistClawPackageRef(
   plan: ClawAddPlan,
-  pkg: ClawPackage,
+  pkg: ResolvedClawPackage,
   options: OpenClawStateDatabaseOptions & {
     nowMs?: number;
     status?: ClawPackageRefStatus;
@@ -327,7 +327,7 @@ export function persistClawPackageRef(
   } = {},
 ): PersistedClawPackageRef {
   const nowMs = options.nowMs ?? Date.now();
-  const record: PersistedClawPackageRef = {
+  let record: PersistedClawPackageRef = {
     schemaVersion: CLAW_PACKAGE_REF_SCHEMA_VERSION,
     agentId: plan.agent.finalId,
     clawName: plan.claw.name,
@@ -342,6 +342,67 @@ export function persistClawPackageRef(
     updatedAtMs: nowMs,
   };
   runOpenClawStateWriteTransaction(({ db }) => {
+    const existing = db /* sqlite-allow-raw: exact owned package-ref replay lookup. */
+      .prepare(
+        `SELECT schema_version, agent_id, claw_name, package_kind, package_source,
+                package_ref, package_version, package_integrity, package_status, ownership,
+                installed_at_ms, updated_at_ms
+           FROM claw_package_refs
+          WHERE agent_id = @agent_id
+            AND package_kind = @package_kind
+            AND package_source = @package_source
+            AND package_ref = @package_ref
+            AND package_version = @package_version`,
+      )
+      .get({
+        agent_id: record.agentId,
+        package_kind: record.kind,
+        package_source: record.source,
+        package_ref: record.ref,
+        package_version: record.version,
+      }) as PackageRefRow | undefined;
+    if (existing) {
+      const previous = rowToPackageRef(existing);
+      if (previous.integrity !== record.integrity) {
+        throw new Error(
+          `Claw package reference ${record.kind}:${record.ref}@${record.version} changed integrity from ${previous.integrity} to ${record.integrity}.`,
+        );
+      }
+      record = {
+        ...record,
+        ownership: previous.ownership === "claw-installed" ? "claw-installed" : record.ownership,
+        installedAtMs: previous.installedAtMs,
+      };
+      db /* sqlite-allow-raw: exact owned package-ref retry update. */
+        .prepare(
+          `UPDATE claw_package_refs
+            SET schema_version = @schema_version,
+                claw_name = @claw_name,
+                package_status = @package_status,
+                ownership = @ownership,
+                updated_at_ms = @updated_at_ms
+          WHERE agent_id = @agent_id
+            AND package_kind = @package_kind
+            AND package_source = @package_source
+            AND package_ref = @package_ref
+            AND package_version = @package_version
+            AND package_integrity = @package_integrity`,
+        )
+        .run({
+          agent_id: record.agentId,
+          package_kind: record.kind,
+          package_source: record.source,
+          package_ref: record.ref,
+          package_version: record.version,
+          package_integrity: record.integrity,
+          schema_version: record.schemaVersion,
+          claw_name: record.clawName,
+          package_status: record.status,
+          ownership: record.ownership,
+          updated_at_ms: record.updatedAtMs,
+        });
+      return;
+    }
     // sqlite-allow-raw: this Claw prototype state-table write is scoped to one owned row.
     db.prepare(
       `INSERT INTO claw_package_refs (

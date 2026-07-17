@@ -29,7 +29,11 @@ export function collectClawPluginUninstallWarnings(params: {
     kind: "plugin",
     source: "clawhub",
     ...(params.env ? { env: params.env } : {}),
-  }).filter((ref) => clawPackageRefMatchesPluginInstall(ref, params.pluginId, installRecord));
+  }).filter(
+    (ref) =>
+      ref.status !== "rolled_back" &&
+      clawPackageRefMatchesPluginInstall(ref, params.pluginId, installRecord),
+  );
   const clawIds = [...new Set(refs.map((ref) => ref.clawName))].toSorted();
   if (clawIds.length === 0) {
     return [];

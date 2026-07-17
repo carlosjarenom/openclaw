@@ -61,6 +61,7 @@ vi.mock("../../infra/fs-safe.js", () => ({
 
 const {
   installSkillFromClawHub,
+  preflightSkillFromClawHub,
   readVerifiedClawHubSkillSourceUrl,
   resolveClawHubSkillStatusLinkSync,
   resolveClawHubSkillVerificationTarget,
@@ -322,6 +323,54 @@ describe("skills-clawhub", () => {
       slug: "agentreceipt",
       version: "1.0.0",
     });
+  });
+
+  it("resolves an exact skill artifact without mutating the workspace", async () => {
+    const integrity = `sha256:${"a".repeat(64)}`;
+    downloadClawHubSkillArchiveMock.mockResolvedValueOnce({
+      archivePath: "/tmp/agentreceipt.zip",
+      integrity,
+      sha256Hex: "a".repeat(64),
+      artifact: "archive",
+      cleanup: archiveCleanupMock,
+    });
+
+    const result = await preflightSkillFromClawHub({
+      workspaceDir: "/tmp/workspace",
+      slug: "agentreceipt",
+      version: "1.0.0",
+      acknowledgeClawHubRisk: true,
+    });
+
+    expect(result).toEqual({ ok: true, action: "install", integrity });
+    expect(withExtractedArchiveRootMock).not.toHaveBeenCalled();
+    expect(installPackageDirMock).not.toHaveBeenCalled();
+    expect(archiveCleanupMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a downloaded skill whose bytes do not match the consented plan", async () => {
+    const observed = `sha256:${"b".repeat(64)}`;
+    downloadClawHubSkillArchiveMock.mockResolvedValueOnce({
+      archivePath: "/tmp/agentreceipt.zip",
+      integrity: observed,
+      sha256Hex: "b".repeat(64),
+      artifact: "archive",
+      cleanup: archiveCleanupMock,
+    });
+
+    const result = await installSkillFromClawHub({
+      workspaceDir: "/tmp/workspace",
+      slug: "agentreceipt",
+      version: "1.0.0",
+      expectedIntegrity: `sha256:${"a".repeat(64)}`,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: `ClawHub archive integrity mismatch: expected sha256:${"a".repeat(64)}, got ${observed}.`,
+    });
+    expect(withExtractedArchiveRootMock).not.toHaveBeenCalled();
+    expect(archiveCleanupMock).toHaveBeenCalledTimes(1);
   });
 
   it("bypasses ClawHub trust checks for official skill install resolutions", async () => {

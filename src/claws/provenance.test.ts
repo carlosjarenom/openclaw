@@ -11,7 +11,9 @@ import {
 import { applyClawAddPlan, ClawAddMutationError } from "./add.js";
 import { buildClawAddPlan } from "./lifecycle.js";
 import {
+  persistClawPackageRef,
   persistClawInstallRecord,
+  readClawPackageRefs,
   readClawInstallRecord,
   updateClawInstallRecordStatus,
 } from "./provenance.js";
@@ -79,6 +81,38 @@ function readInstallRow(agentId: string, root: string) {
 }
 
 describe("Claw root install provenance", () => {
+  it("replays an exact package ref without losing Claw-installed ownership", async () => {
+    const { root, plan } = await makePlan();
+    const pkg = {
+      kind: "plugin" as const,
+      source: "clawhub" as const,
+      ref: "@acme/audit",
+      version: "1.2.3",
+      integrity: `sha256:${"a".repeat(64)}`,
+    };
+
+    persistClawPackageRef(plan, pkg, {
+      env: stateEnv(root),
+      nowMs: 42,
+      status: "pending",
+      ownership: "claw-installed",
+    });
+    const replayed = persistClawPackageRef(plan, pkg, {
+      env: stateEnv(root),
+      nowMs: 84,
+      status: "complete",
+      ownership: "independently-owned",
+    });
+
+    expect(replayed).toMatchObject({
+      status: "complete",
+      ownership: "claw-installed",
+      installedAtMs: 42,
+      updatedAtMs: 84,
+    });
+    expect(readClawPackageRefs({ env: stateEnv(root) })).toEqual([replayed]);
+  });
+
   it("persists package identity, agent ownership, workspace, and config digest", async () => {
     const { root, plan } = await makePlan();
 
@@ -254,9 +288,14 @@ describe("applyClawAddPlan", () => {
           transform({ agents: { defaults: { workspace: mainWorkspace } } });
         },
       }),
-    ).rejects.toMatchObject({ code: "workspace_collision" });
+    ).resolves.toMatchObject({
+      status: "partial",
+      workspaceCreated: false,
+      configCommitted: false,
+      error: { code: "workspace_collision" },
+    });
     await expect(access(plan.agent.workspace)).rejects.toThrow();
-    expect(readInstallRow("worker", planRoot)).toBeUndefined();
+    expect(readInstallRow("worker", planRoot)?.status).toBe("partial");
   });
 
   it("rechecks agent collisions during the config commit and cleans the reserved workspace", async () => {
@@ -300,7 +339,12 @@ describe("applyClawAddPlan", () => {
           });
         },
       }),
-    ).rejects.toMatchObject({ code: "workspace_collision" });
+    ).resolves.toMatchObject({
+      status: "partial",
+      workspaceCreated: false,
+      configCommitted: false,
+      error: { code: "workspace_collision" },
+    });
     await expect(access(plan.agent.workspace)).rejects.toThrow();
   });
 
@@ -486,7 +530,6 @@ describe("applyClawAddPlan", () => {
           source: "clawhub",
           ref: "demo",
           version: "1.0.0",
-          integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
       ],
     });

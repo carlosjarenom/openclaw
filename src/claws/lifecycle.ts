@@ -34,7 +34,15 @@ type ClawAddPlanContext = {
   existingCronJobIds?: Iterable<string>;
   packagePreflight?: (
     pkg: ClawPackage,
-  ) => Promise<{ ok: boolean; action?: "install" | "reuse"; code?: string; message?: string }>;
+    workspace: string,
+  ) => Promise<{
+    ok: boolean;
+    action?: "install" | "reuse";
+    integrity?: string;
+    installId?: string;
+    code?: string;
+    message?: string;
+  }>;
 };
 
 function canonicalWorkspacePath(value: string): string {
@@ -344,7 +352,7 @@ export async function buildClawAddPlan(params: {
 
   for (const pkg of params.manifest.packages) {
     const preflight = context.packagePreflight
-      ? await context.packagePreflight(pkg)
+      ? await context.packagePreflight(pkg, workspace)
       : {
           ok: false,
           code: "package_install_unavailable",
@@ -365,9 +373,11 @@ export async function buildClawAddPlan(params: {
       id: `${pkg.kind}:${pkg.ref}`,
       action: "install",
       target: `${pkg.source}:${pkg.ref}@${pkg.version}`,
-      digest: pkg.integrity,
+      digest: preflight.integrity,
       details: {
         ...pkg,
+        ...(preflight.integrity ? { integrity: preflight.integrity } : {}),
+        ...(preflight.installId ? { installId: preflight.installId } : {}),
         expectedState: !preflight.ok
           ? "unresolved"
           : preflight.action === "reuse"

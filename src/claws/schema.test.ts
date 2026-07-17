@@ -33,14 +33,12 @@ const baseManifest = {
       source: "clawhub",
       ref: "@acme/triage",
       version: "1.2.0",
-      integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     },
     {
       kind: "plugin",
       source: "clawhub",
       ref: "@acme/github",
       version: "2.0.1",
-      integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     },
   ],
   mcpServers: {
@@ -141,7 +139,7 @@ describe("parseClawManifest", () => {
     },
   );
 
-  it("rejects required flags and connector packages", () => {
+  it("rejects non-v1 package fields and connector packages", () => {
     const connector = parseClawManifest({
       ...baseManifest,
       packages: [{ kind: "connector", source: "clawhub", ref: "@acme/chat", version: "1.0.0" }],
@@ -155,6 +153,18 @@ describe("parseClawManifest", () => {
     });
     expect(required.ok).toBe(false);
     expect(required.diagnostics[0]?.path).toBe("$.packages[0]");
+
+    const manifestIntegrity = parseClawManifest({
+      ...baseManifest,
+      packages: [
+        {
+          ...baseManifest.packages[0],
+          integrity: `sha256:${"a".repeat(64)}`,
+        },
+      ],
+    });
+    expect(manifestIntegrity.ok).toBe(false);
+    expect(manifestIntegrity.diagnostics[0]?.path).toBe("$.packages[0]");
   });
 
   it("requires exact package versions", () => {
@@ -166,7 +176,6 @@ describe("parseClawManifest", () => {
           source: "clawhub",
           ref: "demo",
           version: "latest",
-          integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
       ],
     });
@@ -449,6 +458,38 @@ describe("readClawManifestFile", () => {
 });
 
 describe("buildClawAddPlan", () => {
+  it("materializes resolved package identity into the consented plan", async () => {
+    const { source, workspace } = await createPlanSource();
+    const plan = await buildClawAddPlan({
+      manifest: requireManifest(),
+      source,
+      context: {
+        workspace,
+        packagePreflight: async (pkg) => ({
+          ok: true,
+          action: "install",
+          integrity: `sha256:${(pkg.kind === "skill" ? "a" : "b").repeat(64)}`,
+          ...(pkg.kind === "plugin" ? { installId: "github" } : {}),
+        }),
+      },
+    });
+
+    expect(plan.actions.filter((action) => action.kind === "package")).toEqual([
+      expect.objectContaining({
+        id: "skill:@acme/triage",
+        digest: `sha256:${"a".repeat(64)}`,
+        details: expect.objectContaining({ ownerAction: "install" }),
+        blocked: false,
+      }),
+      expect.objectContaining({
+        id: "plugin:@acme/github",
+        digest: `sha256:${"b".repeat(64)}`,
+        details: expect.objectContaining({ ownerAction: "install", installId: "github" }),
+        blocked: false,
+      }),
+    ]);
+  });
+
   it("plans one new agent, workspace, packages, MCP servers, and agent-pinned cron jobs", async () => {
     const { source, workspace } = await createPlanSource();
     const plan = await buildClawAddPlan({

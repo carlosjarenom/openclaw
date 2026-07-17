@@ -27,7 +27,6 @@ describe("portable Claw schema conformance", () => {
             source: "clawhub",
             ref: "demo",
             version,
-            integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           },
         ],
       });
@@ -47,7 +46,6 @@ describe("portable Claw schema conformance", () => {
           source: "clawhub",
           ref: "Demo",
           version: "1.0.0",
-          integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
       ],
     });

@@ -35,10 +35,6 @@ const clawHubPackageName = nonEmptyString.refine(
   isCanonicalClawHubPackageName,
   "ClawHub package references must use their canonical lowercase name.",
 );
-const sha256Integrity = nonEmptyString.regex(
-  /^sha256:[a-f0-9]{64}$/,
-  "Package integrity must be a sha256 digest with 64 lowercase hex characters.",
-);
 const portableEnvKey = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const packageRelativePath = nonEmptyString.refine(isSafeClawRelativePath, {
@@ -155,7 +151,6 @@ const packageSchema = z
     source: z.literal("clawhub"),
     ref: clawHubPackageName,
     version: exactVersion,
-    integrity: sha256Integrity,
   })
   .strict();
 

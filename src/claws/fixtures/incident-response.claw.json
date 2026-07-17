@@ -52,15 +52,13 @@
       "kind": "skill",
       "source": "clawhub",
       "ref": "incident-triage",
-      "version": "1.0.0",
-      "integrity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "version": "1.0.0"
     },
     {
       "kind": "plugin",
       "source": "clawhub",
       "ref": "@openclaw/plugin-pager-duty",
-      "version": "2.4.0",
-      "integrity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "version": "2.4.0"
     }
   ],
   "mcpServers": {

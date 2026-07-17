@@ -81,8 +81,9 @@ export type ClawPackage = {
   source: "clawhub";
   ref: string;
   version: string;
-  integrity: string;
 };
+
+export type ResolvedClawPackage = ClawPackage & { integrity: string };
 
 type ClawMcpServerCommon = {
   toolFilter?: {

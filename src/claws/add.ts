@@ -195,29 +195,6 @@ export async function applyClawAddPlan(
 
   const installPackages = options.installPackages ?? installClawPackages;
   let packages: PersistedClawPackageRef[] = [];
-  try {
-    // Package installers retain their own trust and integrity gates. Run them before
-    // creating the target agent or writing its workspace/configuration.
-    packages = await installPackages(plan, options);
-  } catch (error) {
-    const packageError =
-      error instanceof ClawPackageInstallError
-        ? error
-        : new ClawPackageInstallError(
-            "package_install_failed",
-            error instanceof Error ? error.message : String(error),
-            packages,
-          );
-    markInstallStatus(plan.agent.finalId, "partial", ["pending", "partial"], options);
-    return partialResult({
-      plan,
-      installRecord,
-      workspaceCreated: false,
-      configCommitted: false,
-      packages: packageError.installedPackages,
-      error: { code: packageError.code, message: packageError.message },
-    });
-  }
 
   const workspace = resolve(resolveUserPath(plan.agent.workspace));
   const workspacePhaseRecorded = statusAtLeast(installRecord.status, "workspace_ready");
@@ -364,12 +341,7 @@ export async function applyClawAddPlan(
       if (removedWorkspace) {
         workspaceCreated = false;
         installStatus = "partial";
-        markInstallStatus(
-          plan.agent.finalId,
-          "partial",
-          ["workspace_ready", "partial"],
-          options,
-        );
+        markInstallStatus(plan.agent.finalId, "partial", ["workspace_ready", "partial"], options);
       }
     }
     return partialResult({
@@ -435,6 +407,32 @@ export async function applyClawAddPlan(
   }
 
   try {
+    // Package mutation is last: skills now have their workspace, and a package
+    // failure cannot leave a later workspace/configuration step unapplied.
+    packages = await installPackages(plan, options);
+  } catch (error) {
+    const packageError =
+      error instanceof ClawPackageInstallError
+        ? error
+        : new ClawPackageInstallError(
+            "package_install_failed",
+            error instanceof Error ? error.message : String(error),
+            packages,
+          );
+    return partialResult({
+      plan,
+      installRecord,
+      workspaceCreated,
+      configCommitted,
+      workspaceFiles,
+      packages: packageError.installedPackages,
+      installStatus: "config_committed",
+      error: { code: packageError.code, message: packageError.message },
+      nowMs: options.nowMs,
+    });
+  }
+
+  try {
     markInstallStatus(plan.agent.finalId, "complete", ["config_committed", "complete"], options);
     return {
       schemaVersion: CLAW_ADD_RESULT_SCHEMA_VERSION,
@@ -466,5 +464,4 @@ export async function applyClawAddPlan(
       error: { code: "provenance_failed", message: (error as Error).message },
     });
   }
-
 }
