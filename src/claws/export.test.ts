@@ -57,7 +57,13 @@ async function installedFixture() {
   });
   persistClawPackageRef(
     plan,
-    { kind: "skill", source: "clawhub", ref: "@acme/triage", version: "2.0.0" },
+    {
+      kind: "skill",
+      source: "clawhub",
+      ref: "@acme/triage",
+      version: "2.0.0",
+      integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    },
     { env: { OPENCLAW_STATE_DIR: join(root, "state") } },
   );
   return { root, plan, config, env: { OPENCLAW_STATE_DIR: join(root, "state") } };
@@ -84,7 +90,15 @@ describe("exportClawAgent", () => {
           bootstrapFiles: { "SOUL.md": { source: "workspace/SOUL.md" } },
           files: [{ source: "workspace/reference/policy.md", path: "reference/policy.md" }],
         },
-        packages: [{ kind: "skill", source: "clawhub", ref: "@acme/triage", version: "2.0.0" }],
+        packages: [
+          {
+            kind: "skill",
+            source: "clawhub",
+            ref: "@acme/triage",
+            version: "2.0.0",
+            integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+        ],
         mcpServers: {},
         cronJobs: [],
       },
@@ -123,8 +137,9 @@ describe("exportClawAgent", () => {
     const avatarPath = join(fixture.plan.agent.workspace, "avatars", "worker.png");
     await mkdir(join(fixture.plan.agent.workspace, "avatars"), { recursive: true });
     await writeFile(avatarPath, "avatar bytes");
+    const agent = fixture.config.agents!.list![0]!;
     fixture.config.agents!.list![0] = {
-      ...fixture.config.agents!.list![0],
+      ...agent,
       identity: { avatar: "avatars/worker.png" },
     };
     const out = join(fixture.root, "exported-avatar");
@@ -146,8 +161,9 @@ describe("exportClawAgent", () => {
 
   it("omits a remote avatar from the portable agent", async () => {
     const fixture = await installedFixture();
+    const agent = fixture.config.agents!.list![0]!;
     fixture.config.agents!.list![0] = {
-      ...fixture.config.agents!.list![0],
+      ...agent,
       identity: { avatar: "https://example.com/worker.png" },
     };
 
@@ -161,8 +177,9 @@ describe("exportClawAgent", () => {
 
   it("omits valid empty optional arrays", async () => {
     const fixture = await installedFixture();
+    const agent = fixture.config.agents!.list![0]!;
     fixture.config.agents!.list![0] = {
-      ...fixture.config.agents!.list![0],
+      ...agent,
       tools: { allow: [], deny: [] },
       groupChat: { mentionPatterns: [] },
     };

@@ -456,7 +456,7 @@ export async function runClawsExportCommand(
 ): Promise<void> {
   assertExperimentalClawsEnabled();
   try {
-    const result = await exportClawAgent(agentId, opts.out, { config: loadConfig() });
+    const result = await exportClawAgent(agentId, opts.out, { config: getRuntimeConfig() });
     if (opts.json) {
       writeRuntimeJson(runtime, result);
       return;

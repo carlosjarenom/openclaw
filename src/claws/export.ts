@@ -15,8 +15,6 @@ import {
   CLAW_BOOTSTRAP_FILE_NAMES,
   CLAW_OUTPUT_STABILITY,
   CLAW_SCHEMA_VERSION,
-  type ClawAgent,
-  type ClawBootstrapFileName,
   type ClawManifest,
 } from "./types.js";
 
@@ -24,8 +22,10 @@ export const CLAW_EXPORT_RESULT_SCHEMA_VERSION = "openclaw.clawExportResult.v1" 
 const MAX_EXPORT_FILE_BYTES = 1024 * 1024;
 
 type AgentConfig = NonNullable<NonNullable<OpenClawConfig["agents"]>["list"]>[number];
+type ClawAgent = ClawManifest["agent"];
+type ClawBootstrapFileName = keyof ClawManifest["workspace"]["bootstrapFiles"];
 
-export type ClawExportResult = {
+type ClawExportResult = {
   schemaVersion: typeof CLAW_EXPORT_RESULT_SCHEMA_VERSION;
   stability: typeof CLAW_OUTPUT_STABILITY;
   agentId: string;
@@ -123,6 +123,10 @@ function portableAgent(agent: AgentConfig, avatar: string | undefined): ClawAgen
 
 function normalizedRelativePath(value: string): string {
   return value.split(sep).join("/");
+}
+
+function isClawBootstrapFileName(value: string): value is ClawBootstrapFileName {
+  return (CLAW_BOOTSTRAP_FILE_NAMES as readonly string[]).includes(value);
 }
 
 function readPortableAvatar(params: {
@@ -223,8 +227,8 @@ export async function exportClawAgent(
   const files: ClawManifest["workspace"]["files"] = [];
   for (const file of contents) {
     const source = `workspace/${file.path}`;
-    if (CLAW_BOOTSTRAP_FILE_NAMES.includes(file.path as ClawBootstrapFileName)) {
-      bootstrapFiles[file.path as ClawBootstrapFileName] = { source };
+    if (isClawBootstrapFileName(file.path)) {
+      bootstrapFiles[file.path] = { source };
     } else {
       files.push({ source, path: file.path });
     }
@@ -234,7 +238,13 @@ export async function exportClawAgent(
     agent: portableAgent(agent, avatar.source),
     workspace: { bootstrapFiles, files },
     packages: record.packages
-      .map((pkg) => ({ kind: pkg.kind, source: pkg.source, ref: pkg.ref, version: pkg.version }))
+      .map((pkg) => ({
+        kind: pkg.kind,
+        source: pkg.source,
+        ref: pkg.ref,
+        version: pkg.version,
+        integrity: pkg.integrity,
+      }))
       .toSorted((left, right) =>
         `${left.kind}:${left.ref}`.localeCompare(`${right.kind}:${right.ref}`),
       ),
