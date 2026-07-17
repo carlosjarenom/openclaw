@@ -1588,7 +1588,7 @@ async function installTrackedSkillFromClawHub(
   }
 }
 
-export type ClawHubSkillInstallPreflightResult =
+type ClawHubSkillInstallPreflightResult =
   | { ok: true; action: "install" | "reuse"; integrity: string }
   | { ok: false; code: string; error: string };
 
