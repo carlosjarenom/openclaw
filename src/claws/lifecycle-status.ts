@@ -37,7 +37,7 @@ type ClawMcpServerStatus = PersistedClawMcpServerRef & {
   state: "present" | "modified" | "missing" | "pending" | "failed";
 };
 
-type ClawStatusRecord = {
+export type ClawStatusRecord = {
   install: PersistedClawInstall;
   orphaned?: boolean;
   agentState: "present" | "modified" | "missing";
