@@ -1,5 +1,6 @@
 // Creates Claw-owned bootstrap and supporting files inside the new agent workspace.
 import { createHash } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { root as fsSafeRoot, FsSafeError } from "../infra/fs-safe.js";
 import {
@@ -116,8 +117,8 @@ export async function createClawWorkspaceFiles(
     return [];
   }
 
-  const workspaceRoot = resolve(plan.agent.workspace);
-  const packageRoot = resolve(plan.claw.packageRoot);
+  const workspaceRoot = await realpath(resolve(plan.agent.workspace));
+  const packageRoot = await realpath(resolve(plan.claw.packageRoot));
   const source = await fsSafeRoot(packageRoot, {
     hardlinks: "reject",
     maxBytes: MAX_CLAW_WORKSPACE_FILE_BYTES,
@@ -161,10 +162,24 @@ export async function createClawWorkspaceFiles(
           createdFiles,
         );
       }
-      const content = await source.readBytes(sourceRelative, {
+      const read = await source.read(sourceRelative, {
+        hardlinks: "reject",
         maxBytes: MAX_CLAW_WORKSPACE_FILE_BYTES,
+        symlinks: "reject",
       });
-      const digest = contentDigest(content);
+      if (resolve(read.realPath) !== sourcePath) {
+        throw new ClawWorkspaceWriteError(
+          [
+            diagnostic(
+              action,
+              "workspace_file_path_alias",
+              `Workspace source ${JSON.stringify(action.id)} no longer resolves to the consented file.`,
+            ),
+          ],
+          createdFiles,
+        );
+      }
+      const digest = contentDigest(read.buffer);
       if (digest !== action.digest) {
         throw new ClawWorkspaceWriteError(
           [
@@ -203,7 +218,7 @@ export async function createClawWorkspaceFiles(
       persistWorkspaceFile(record, options);
       let wroteFile = false;
       try {
-        await workspace.write(targetRelative, content, { mkdir: true, overwrite: false });
+        await workspace.write(targetRelative, read.buffer, { mkdir: true, overwrite: false });
         wroteFile = true;
         record.status = "complete";
         updateWorkspaceFileStatus(record, options);

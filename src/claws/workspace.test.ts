@@ -188,6 +188,26 @@ describe("createClawWorkspaceFiles", () => {
     },
   );
 
+  it.runIf(process.platform !== "win32")(
+    "rejects a tampered plan source through a symlinked parent",
+    async () => {
+      const { root, workspace, plan } = await makePlan();
+      await symlink(join(root, "content"), join(root, "content-link"), "dir");
+      const action = plan.actions.find(
+        (candidate) => candidate.kind === "workspaceFile" && candidate.id === "AGENTS.md",
+      );
+      if (!action) {
+        throw new Error("expected workspace action");
+      }
+      action.source = join(root, "content-link", "AGENTS.md");
+
+      await expect(createClawWorkspaceFiles(plan, { env: stateEnv(root) })).rejects.toMatchObject({
+        diagnostics: [expect.objectContaining({ code: "workspace_file_path_alias" })],
+      });
+      await expect(readFile(join(workspace, "AGENTS.md"), "utf8")).rejects.toThrow();
+    },
+  );
+
   it("persists earlier files when a later destination collides", async () => {
     const { root, workspace, plan } = await makePlan({
       workspace: {
@@ -251,7 +271,7 @@ describe("workspace files in the consented add lifecycle", () => {
     expect(readInstallStatus("workspace-agent", root)).toBe("complete");
   });
 
-  it("marks the root install partial and retains earlier file refs after a later source changes", async () => {
+  it("keeps root add resumable and retains earlier file refs after a later source changes", async () => {
     const { root, plan } = await makePlan({
       createWorkspace: false,
       mutateAfterPlan: async (_plan, packageRoot) => {
@@ -272,13 +292,13 @@ describe("workspace files in the consented add lifecycle", () => {
     expect(result).toMatchObject({
       status: "partial",
       workspaceFiles: [expect.objectContaining({ path: "AGENTS.md" })],
-      installRecord: { status: "partial" },
+      installRecord: { status: "config_committed" },
       error: {
         code: "workspace_files_failed",
         diagnostics: [expect.objectContaining({ code: "workspace_source_changed" })],
       },
     });
     expect(config.agents?.list?.[0]?.id).toBe("workspace-agent");
-    expect(readInstallStatus("workspace-agent", root)).toBe("partial");
+    expect(readInstallStatus("workspace-agent", root)).toBe("config_committed");
   });
 });
