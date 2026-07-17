@@ -1,5 +1,5 @@
 // Tests root Claw install ownership and the narrow agent/workspace mutation slice.
-import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -232,6 +232,32 @@ describe("applyClawAddPlan", () => {
         },
       }),
     ).rejects.toMatchObject({ code: "agent_id_collision" });
+    await expect(access(plan.agent.workspace)).rejects.toThrow();
+  });
+
+  it("rechecks aliased workspace collisions during the config commit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openclaw-claw-workspace-alias-"));
+    const canonicalParent = join(root, "canonical");
+    const aliasParent = join(root, "alias");
+    await mkdir(canonicalParent);
+    await symlink(canonicalParent, aliasParent, process.platform === "win32" ? "junction" : "dir");
+    const { root: planRoot, plan } = await makePlan(undefined, {
+      workspace: join(canonicalParent, "workspace-worker"),
+    });
+
+    await expect(
+      applyClawAddPlan(plan, {
+        consentPlanIntegrity: plan.planIntegrity,
+        env: stateEnv(planRoot),
+        commitConfig: async (transform) => {
+          transform({
+            agents: {
+              list: [{ id: "other", workspace: join(aliasParent, "workspace-worker") }],
+            },
+          });
+        },
+      }),
+    ).rejects.toMatchObject({ code: "workspace_collision" });
     await expect(access(plan.agent.workspace)).rejects.toThrow();
   });
 

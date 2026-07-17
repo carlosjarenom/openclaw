@@ -4,6 +4,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { stableStringify } from "../agents/stable-stringify.js";
+import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import { assertNoSymlinkParents } from "../infra/fs-safe-advanced.js";
 import { FsSafeError, root as fsSafeRoot, type Root } from "../infra/fs-safe.js";
 import { resolveUserPath } from "../utils.js";
@@ -31,6 +32,10 @@ type ClawAddPlanContext = {
   existingMcpServerNames?: Iterable<string>;
   existingCronJobIds?: Iterable<string>;
 };
+
+function canonicalWorkspacePath(value: string): string {
+  return resolvePathViaExistingAncestorSync(resolve(resolveUserPath(value)));
+}
 
 function blocker(code: string, path: string, message: string): ClawDiagnostic {
   return { level: "error", code, phase: "plan", path, message };
@@ -163,8 +168,8 @@ export async function buildClawAddPlan(params: {
 }): Promise<ClawAddPlan> {
   const context = params.context ?? {};
   const finalId = context.agentId ?? params.manifest.agent.id;
-  const workspace = resolve(
-    resolveUserPath(context.workspace ?? resolve(homedir(), ".openclaw", `workspace-${finalId}`)),
+  const workspace = canonicalWorkspacePath(
+    context.workspace ?? resolve(homedir(), ".openclaw", `workspace-${finalId}`),
   );
   const packageRoot = await realpath(params.source.packageRoot).catch(
     () => params.source.packageRoot,
@@ -205,14 +210,14 @@ export async function buildClawAddPlan(params: {
   });
 
   const configuredWorkspacePaths = new Set(
-    [...(context.existingWorkspacePaths ?? [])].map((path) => resolve(resolveUserPath(path))),
+    [...(context.existingWorkspacePaths ?? [])].map((path) => canonicalWorkspacePath(path)),
   );
   const configuredWorkspaceConflict = configuredWorkspacePaths.has(workspace);
   const workspaceExistsOnDisk = await lstat(workspace)
     .then(() => true)
     .catch(() => false);
   const resumableWorkspace = context.resumableWorkspace
-    ? resolve(resolveUserPath(context.resumableWorkspace))
+    ? canonicalWorkspacePath(context.resumableWorkspace)
     : undefined;
   const workspaceBlocked =
     configuredWorkspaceConflict || (workspaceExistsOnDisk && resumableWorkspace !== workspace);

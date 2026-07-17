@@ -1,7 +1,7 @@
 // Applies the narrow agent/workspace creation slice of a consented Claw add plan.
 import { mkdir, rmdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { listAgentIds, resolveAgentWorkspaceDir } from "../agents/agent-scope-config.js";
+import { findOverlappingWorkspaceAgentIds } from "../agents/agent-delete-safety.js";
 import { stableStringify } from "../agents/stable-stringify.js";
 import { transformConfigFileWithRetry } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -181,11 +181,7 @@ export async function applyClawAddPlan(
           `Agent ${JSON.stringify(plan.agent.finalId)} was created after planning.`,
         );
       }
-      if (
-        listAgentIds(config).some(
-          (agentId) => resolve(resolveAgentWorkspaceDir(config, agentId)) === workspace,
-        )
-      ) {
+      if (findOverlappingWorkspaceAgentIds(config, plan.agent.finalId, workspace).length > 0) {
         throw new ClawAddMutationError(
           "workspace_collision",
           `Workspace ${JSON.stringify(workspace)} is already assigned to an agent.`,
