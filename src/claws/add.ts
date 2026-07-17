@@ -56,10 +56,6 @@ function hasUnsupportedMutationActions(plan: ClawAddPlan): boolean {
   return plan.actions.some((action) => !["agent", "workspace"].includes(action.kind));
 }
 
-function hasNodeErrorCode(error: unknown, code: string): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === code;
-}
-
 function statusAtLeast(status: ClawInstallStatus, phase: ClawInstallStatus): boolean {
   const order: Record<ClawInstallStatus, number> = {
     pending: 0,
@@ -74,9 +70,13 @@ function statusAtLeast(status: ClawInstallStatus, phase: ClawInstallStatus): boo
 function markInstallStatus(
   agentId: string,
   status: ClawInstallStatus,
+  expectedStatuses: ClawInstallStatus[],
   options: ClawAddApplyOptions,
 ): void {
-  (options.updateRecord ?? updateClawInstallRecordStatus)(agentId, status, options);
+  (options.updateRecord ?? updateClawInstallRecordStatus)(agentId, status, {
+    ...options,
+    expectedStatuses,
+  });
 }
 
 function sameCommittedAgent(existingAgent: AgentConfig, plan: ClawAddPlan): boolean {
@@ -118,26 +118,44 @@ export async function applyClawAddPlan(
   try {
     await mkdir(dirname(workspace), { recursive: true });
   } catch (error) {
-    markInstallStatus(plan.agent.finalId, "partial", options);
+    markInstallStatus(plan.agent.finalId, "partial", ["pending", "partial"], options);
     throw new ClawAddMutationError(
       "workspace_parent_failed",
       `Could not create parent directory for workspace ${JSON.stringify(workspace)}: ${(error as Error).message}`,
     );
   }
 
-  try {
-    await mkdir(workspace);
-    workspaceCreated = true;
-    markInstallStatus(plan.agent.finalId, "workspace_ready", options);
-  } catch (error) {
-    if (hasNodeErrorCode(error, "EEXIST") && workspaceCreated) {
+  if (!workspaceCreated) {
+    try {
+      await mkdir(workspace);
       workspaceCreated = true;
-    } else {
-      markInstallStatus(plan.agent.finalId, "partial", options);
+    } catch (error) {
+      markInstallStatus(plan.agent.finalId, "partial", ["pending", "partial"], options);
       throw new ClawAddMutationError(
         "workspace_collision",
         `Could not create new workspace ${JSON.stringify(workspace)}: ${(error as Error).message}`,
       );
+    }
+
+    try {
+      markInstallStatus(
+        plan.agent.finalId,
+        "workspace_ready",
+        ["pending", "partial", "workspace_ready"],
+        options,
+      );
+    } catch (error) {
+      const removedWorkspace = await rmdir(workspace)
+        .then(() => true)
+        .catch(() => false);
+      if (removedWorkspace) {
+        try {
+          markInstallStatus(plan.agent.finalId, "partial", ["pending", "partial"], options);
+        } catch {
+          // Preserve the phase-write failure; a pending row plus no workspace is safe to retry.
+        }
+      }
+      throw new ClawAddMutationError("provenance_failed", (error as Error).message);
     }
   }
 
@@ -183,21 +201,26 @@ export async function applyClawAddPlan(
       configCommitted = true;
       return nextConfig;
     });
-    markInstallStatus(plan.agent.finalId, "config_committed", options);
+    markInstallStatus(
+      plan.agent.finalId,
+      "config_committed",
+      ["workspace_ready", "config_committed"],
+      options,
+    );
   } catch (error) {
     if (!configCommitted) {
       const removedWorkspace = await rmdir(workspace)
         .then(() => true)
         .catch(() => false);
       if (removedWorkspace) {
-        markInstallStatus(plan.agent.finalId, "partial", options);
+        markInstallStatus(plan.agent.finalId, "partial", ["workspace_ready", "partial"], options);
       }
     }
     throw error;
   }
 
   try {
-    markInstallStatus(plan.agent.finalId, "complete", options);
+    markInstallStatus(plan.agent.finalId, "complete", ["config_committed", "complete"], options);
     return {
       schemaVersion: CLAW_ADD_RESULT_SCHEMA_VERSION,
       stability: CLAW_OUTPUT_STABILITY,

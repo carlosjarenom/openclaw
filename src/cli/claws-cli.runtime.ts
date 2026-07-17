@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import { listAgentIds, resolveAgentWorkspaceDir } from "../agents/agent-scope-config.js";
 import {
   applyClawAddPlan,
@@ -188,6 +187,10 @@ export async function runClawsAddCommand(
   });
   const resumeRecord = matchingResumeRecord(plan, opts);
   if (resumeRecord && plan.blockers.length > 0) {
+    const resumableWorkspace =
+      resumeRecord.status === "workspace_ready" || resumeRecord.status === "config_committed"
+        ? resumeRecord.workspace
+        : undefined;
     plan = await buildClawAddPlan({
       manifest: result.manifest,
       source: result.source,
@@ -195,9 +198,10 @@ export async function runClawsAddCommand(
       context: {
         ...basePlanContext,
         existingAgentIds: existingAgentIds.filter((agentId) => agentId !== resumeRecord.agentId),
-        existingWorkspacePaths: existingWorkspacePaths.filter(
-          (workspacePath) => resolve(workspacePath) !== resolve(resumeRecord.workspace),
-        ),
+        existingWorkspacePaths: existingAgentIds
+          .filter((agentId) => agentId !== resumeRecord.agentId)
+          .map((agentId) => resolveAgentWorkspaceDir(config, agentId)),
+        ...(resumableWorkspace ? { resumableWorkspace } : {}),
       },
     });
   }

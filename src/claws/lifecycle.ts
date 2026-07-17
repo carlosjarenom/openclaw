@@ -25,6 +25,7 @@ const AGENT_ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 type ClawAddPlanContext = {
   agentId?: string;
   workspace?: string;
+  resumableWorkspace?: string;
   existingAgentIds?: Iterable<string>;
   existingWorkspacePaths?: Iterable<string>;
   existingMcpServerNames?: Iterable<string>;
@@ -206,12 +207,16 @@ export async function buildClawAddPlan(params: {
   const configuredWorkspacePaths = new Set(
     [...(context.existingWorkspacePaths ?? [])].map((path) => resolve(resolveUserPath(path))),
   );
-  const workspaceExists =
-    configuredWorkspacePaths.has(workspace) ||
-    (await lstat(workspace)
-      .then(() => true)
-      .catch(() => false));
-  if (workspaceExists) {
+  const configuredWorkspaceConflict = configuredWorkspacePaths.has(workspace);
+  const workspaceExistsOnDisk = await lstat(workspace)
+    .then(() => true)
+    .catch(() => false);
+  const resumableWorkspace = context.resumableWorkspace
+    ? resolve(resolveUserPath(context.resumableWorkspace))
+    : undefined;
+  const workspaceBlocked =
+    configuredWorkspaceConflict || (workspaceExistsOnDisk && resumableWorkspace !== workspace);
+  if (workspaceBlocked) {
     blockers.push(
       blocker(
         "workspace_collision",
@@ -226,8 +231,8 @@ export async function buildClawAddPlan(params: {
     action: "create",
     target: workspace,
     details: { expectedState: "absent" },
-    blocked: workspaceExists,
-    ...(workspaceExists
+    blocked: workspaceBlocked,
+    ...(workspaceBlocked
       ? { reason: `Workspace ${JSON.stringify(workspace)} already exists.` }
       : {}),
   });
@@ -252,8 +257,8 @@ export async function buildClawAddPlan(params: {
     if (!action) {
       throw new Error("Claw workspace source inspection did not produce an action");
     }
-    action.blocked ||= workspaceExists;
-    if (workspaceExists) {
+    action.blocked ||= workspaceBlocked;
+    if (workspaceBlocked) {
       action.reason = `Workspace ${JSON.stringify(workspace)} already exists.`;
     }
     actions.push(action);

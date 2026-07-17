@@ -1891,7 +1891,9 @@ CREATE TABLE IF NOT EXISTS claw_installs (
   workspace TEXT NOT NULL UNIQUE,
   agent_config_digest TEXT NOT NULL,
   agent_owned_paths_json TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (
+    status IN ('pending', 'workspace_ready', 'config_committed', 'complete', 'partial')
+  ),
   added_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL
 ) STRICT;

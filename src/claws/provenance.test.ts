@@ -10,7 +10,11 @@ import {
 } from "../state/openclaw-state-db.js";
 import { applyClawAddPlan, ClawAddMutationError } from "./add.js";
 import { buildClawAddPlan } from "./lifecycle.js";
-import { persistClawInstallRecord, readClawInstallRecord } from "./provenance.js";
+import {
+  persistClawInstallRecord,
+  readClawInstallRecord,
+  updateClawInstallRecordStatus,
+} from "./provenance.js";
 import { parseClawManifest } from "./schema.js";
 import type { ClawSourceIdentity } from "./types.js";
 
@@ -136,6 +140,36 @@ describe("Claw root install provenance", () => {
       addedAtMs: 1,
     });
   });
+
+  it("rejects a stale phase update after an install reaches complete", async () => {
+    const { root, plan } = await makePlan();
+    const options = { env: stateEnv(root) };
+    persistClawInstallRecord(plan, { ...options, status: "pending", nowMs: 1 });
+    updateClawInstallRecordStatus("worker", "workspace_ready", {
+      ...options,
+      expectedStatuses: ["pending"],
+      nowMs: 2,
+    });
+    updateClawInstallRecordStatus("worker", "config_committed", {
+      ...options,
+      expectedStatuses: ["workspace_ready"],
+      nowMs: 3,
+    });
+    updateClawInstallRecordStatus("worker", "complete", {
+      ...options,
+      expectedStatuses: ["config_committed"],
+      nowMs: 4,
+    });
+
+    expect(() =>
+      updateClawInstallRecordStatus("worker", "partial", {
+        ...options,
+        expectedStatuses: ["pending", "partial"],
+        nowMs: 5,
+      }),
+    ).toThrow("did not match the expected phase");
+    expect(readClawInstallRecord("worker", options)?.status).toBe("complete");
+  });
 });
 
 describe("applyClawAddPlan", () => {
@@ -229,6 +263,28 @@ describe("applyClawAddPlan", () => {
       }),
     ).rejects.toMatchObject({ code: "workspace_parent_failed" });
     expect(readInstallRow("worker", root)?.status).toBe("partial");
+  });
+
+  it("removes a new workspace when its durable phase cannot be recorded", async () => {
+    const { root, plan } = await makePlan();
+    const statuses: string[] = [];
+
+    await expect(
+      applyClawAddPlan(plan, {
+        consentPlanIntegrity: plan.planIntegrity,
+        env: stateEnv(root),
+        updateRecord: (_agentId, status) => {
+          statuses.push(status);
+          if (status === "workspace_ready") {
+            throw new Error("database unavailable");
+          }
+        },
+      }),
+    ).rejects.toMatchObject({ code: "provenance_failed" });
+
+    expect(statuses).toEqual(["workspace_ready", "partial"]);
+    await expect(access(plan.agent.workspace)).rejects.toThrow();
+    expect(readInstallRow("worker", root)?.status).toBe("pending");
   });
 
   it("resumes a matching partial add with an existing non-empty workspace", async () => {

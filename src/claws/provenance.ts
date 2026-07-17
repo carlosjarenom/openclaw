@@ -215,14 +215,29 @@ export function persistClawInstallRecord(
 export function updateClawInstallRecordStatus(
   agentId: string,
   status: ClawInstallStatus,
-  options: OpenClawStateDatabaseOptions & { nowMs?: number } = {},
+  options: OpenClawStateDatabaseOptions & {
+    nowMs?: number;
+    expectedStatuses?: ClawInstallStatus[];
+  } = {},
 ): void {
   runOpenClawStateWriteTransaction(({ db }) => {
+    const expectedStatuses = options.expectedStatuses ?? [];
+    const expectedClause =
+      expectedStatuses.length > 0
+        ? ` AND status IN (${expectedStatuses.map(() => "?").join(", ")})`
+        : "";
     // sqlite-allow-raw: this Claw prototype state-table write is scoped to one owned row.
-    db.prepare("UPDATE claw_installs SET status = ?, updated_at_ms = ? WHERE agent_id = ?").run(
-      status,
-      options.nowMs ?? Date.now(),
-      agentId,
-    );
+    const result = db
+      .prepare(
+        `UPDATE claw_installs
+            SET status = ?, updated_at_ms = ?
+          WHERE agent_id = ?${expectedClause}`,
+      )
+      .run(status, options.nowMs ?? Date.now(), agentId, ...expectedStatuses);
+    if (result.changes !== 1) {
+      throw new Error(
+        `Claw install record for agent ${JSON.stringify(agentId)} did not match the expected phase.`,
+      );
+    }
   }, options);
 }
