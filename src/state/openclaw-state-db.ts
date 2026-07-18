@@ -771,8 +771,7 @@ export function detectOpenClawStateDatabaseSchemaMigrations(
     return [];
   }
   const sqlite = requireNodeSqlite();
-  const uri = `${pathToFileURL(pathname).href}?mode=ro&immutable=1`;
-  const db = new sqlite.DatabaseSync(uri, { readOnly: true });
+  const db = new sqlite.DatabaseSync(pathname, { readOnly: true });
   try {
     const migrations: OpenClawStateDatabaseSchemaMigration[] = [];
     if (!hasCanonicalAgentDatabasesPrimaryKey(db)) {
