@@ -32,7 +32,9 @@ function snapshotMcpServers(config: OpenClawConfig): Record<string, Record<strin
   return structuredClone(config.mcp?.servers ?? {}) as Record<string, Record<string, unknown>>;
 }
 
-async function fixture(params: { withFile?: boolean; withMcp?: boolean; withCron?: boolean } = {}) {
+async function fixture(
+  params: { withFile?: boolean; withMcp?: boolean; withCron?: boolean; cron?: string } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "openclaw-claw-doctor-"));
   if (params.withFile) {
     await writeFile(join(root, "SOUL.md"), "managed\n", "utf8");
@@ -54,7 +56,7 @@ async function fixture(params: { withFile?: boolean; withMcp?: boolean; withCron
       ? [
           {
             id: "daily-report",
-            schedule: { cron: "0 9 * * *", timezone: "UTC" },
+            schedule: { cron: params.cron ?? "0 9 * * *", timezone: "UTC" },
             session: "isolated",
             message: "Prepare report",
           },
@@ -87,7 +89,7 @@ async function fixture(params: { withFile?: boolean; withMcp?: boolean; withCron
 }
 
 async function installFixture(
-  params: { withFile?: boolean; withMcp?: boolean; withCron?: boolean } = {},
+  params: { withFile?: boolean; withMcp?: boolean; withCron?: boolean; cron?: string } = {},
 ) {
   const current = await fixture(params);
   let config: OpenClawConfig = {};
@@ -430,6 +432,43 @@ describe("collectClawStateHealthFindings", () => {
               createdAtMs: 1,
               updatedAtMs: 1,
               schedule: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
+              sessionTarget: "isolated",
+              wakeMode: "now",
+              payload: { kind: "agentTurn", message: "Prepare report" },
+              delivery: { mode: "none" },
+              state: {},
+            },
+          ],
+        },
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it("accepts Gateway default staggering for recurring top-of-hour schedules", async () => {
+    const current = await installFixture({ withCron: true, cron: "0 * * * *" });
+
+    await expect(
+      collectClawStateHealthFindings({
+        env: current.env,
+        cfg: current.getConfig(),
+        sourceMcpServers: snapshotMcpServers(current.getConfig()),
+        cronGateway: {
+          list: async () => [
+            {
+              id: "scheduler-daily",
+              agentId: "worker",
+              owner: { agentId: "worker" },
+              declarationKey: "claw:worker:daily-report",
+              name: "daily-report",
+              enabled: true,
+              createdAtMs: 1,
+              updatedAtMs: 1,
+              schedule: {
+                kind: "cron",
+                expr: "0 * * * *",
+                tz: "UTC",
+                staggerMs: 300_000,
+              },
               sessionTarget: "isolated",
               wakeMode: "now",
               payload: { kind: "agentTurn", message: "Prepare report" },

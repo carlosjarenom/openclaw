@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { stableStringify } from "../agents/stable-stringify.js";
 import { listConfiguredMcpServers } from "../config/mcp-config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveDefaultCronStaggerMs } from "../cron/stagger.js";
 import type { CronJob } from "../cron/types.js";
 import type { HealthFinding } from "../flows/health-checks.js";
 import {
@@ -56,6 +57,7 @@ function expectedCronExecutionDigest(
   cron: ClawStatusRecord["cronJobs"][number],
 ): string {
   const job = cron.job;
+  const staggerMs = resolveDefaultCronStaggerMs(job.schedule.cron);
   return cronExecutionDigest({
     declarationKey: cron.declarationKey,
     ownerAgentId: record.install.agentId,
@@ -64,6 +66,7 @@ function expectedCronExecutionDigest(
       kind: "cron",
       expr: job.schedule.cron,
       ...(job.schedule.timezone ? { tz: job.schedule.timezone } : {}),
+      ...(staggerMs !== undefined ? { staggerMs } : {}),
     },
     sessionTarget:
       job.session === "main" ? `session:agent:${record.install.agentId}:main` : job.session,
