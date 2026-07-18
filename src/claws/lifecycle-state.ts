@@ -28,12 +28,14 @@ import {
   workspaceContainsUntrackedEntries,
   type ClawTrashPath,
 } from "./lifecycle-delete-support.js";
+import { projectClawPackageRemovePlan } from "./package-remove-plan.js";
 import {
   applyClawPackageRemovals,
   inspectClawPackage,
   planClawPackageRemovals,
   type ClawPackageInspection,
   type ClawPackageRemovalResult,
+  type ClawReferencedCleanup,
   type PackageRemovalDeps,
 } from "./package-remove.js";
 import {
@@ -253,6 +255,7 @@ export async function buildClawRemovePlan(
   options: OpenClawStateDatabaseOptions & {
     config?: OpenClawConfig;
     packageDeps?: PackageRemovalDeps;
+    referencedCleanup?: ClawReferencedCleanup;
   } = {},
 ): Promise<ClawRemovePlan> {
   const status = await readClawStatus(target, options);
@@ -288,7 +291,14 @@ export async function buildClawRemovePlan(
     const packageDecisions = await planClawPackageRemovals(record.install, record.packages, {
       ...options,
       deps: options.packageDeps,
+      referencedCleanup: options.referencedCleanup,
     });
+    const packagePlan = projectClawPackageRemovePlan({
+      decisions: packageDecisions,
+      inspections: record.packages,
+      cleanup: options.referencedCleanup,
+    });
+    blockers.push(...packagePlan.blockers);
     const effects = deletionEffects(
       options.config ?? getRuntimeConfig(),
       record.install.agentId,
@@ -425,29 +435,7 @@ export async function buildClawRemovePlan(
           : {}),
       });
     }
-    for (const decision of packageDecisions) {
-      const pkg = decision.packageRef;
-      const inspected = record.packages.find(
-        (candidate) =>
-          candidate.kind === pkg.kind &&
-          candidate.source === pkg.source &&
-          candidate.ref === pkg.ref &&
-          candidate.version === pkg.version,
-      );
-      actions.push({
-        kind: "packageRef",
-        id: `${pkg.kind}:${pkg.ref}@${pkg.version}`,
-        action: decision.action === "uninstall" ? "uninstall" : "release",
-        target: `${pkg.source}:${pkg.ref}@${pkg.version}`,
-        blocked: false,
-        details: {
-          expectedState: inspected?.state ?? "incomplete",
-          status: pkg.status,
-          ownership: pkg.ownership,
-        },
-        ...(decision.reason ? { reason: decision.reason } : {}),
-      });
-    }
+    actions.push(...packagePlan.actions);
     actions.push({
       kind: "installRecord",
       id: record.install.agentId,
@@ -553,6 +541,7 @@ export async function applyClawRemovePlan(
     config?: OpenClawConfig;
     commitConfig?: ConfigCommit;
     packageDeps?: PackageRemovalDeps;
+    referencedCleanup?: ClawReferencedCleanup;
     purgeSessions?: PurgeSessions;
     trashPath?: ClawTrashPath;
     consentPlanIntegrity?: string;
@@ -591,6 +580,7 @@ export async function applyClawRemovePlan(
   const packageDecisions = await planClawPackageRemovals(record.install, record.packages, {
     ...options,
     deps: options.packageDeps,
+    referencedCleanup: options.referencedCleanup,
   });
   const plannedPackages = plan.actions
     .filter((action) => action.kind === "packageRef")
@@ -629,10 +619,17 @@ export async function applyClawRemovePlan(
     await purgeSessions(configBeforeDelete, agentId);
   }
   closeOpenClawAgentDatabaseByPath(resolveOpenClawAgentSqlitePath({ agentId, env: options.env }));
-  const packages = await applyClawPackageRemovals(packageDecisions, {
-    ...options,
-    deps: options.packageDeps,
-  });
+  const packages = await applyClawPackageRemovals(
+    packageDecisions.toSorted(
+      (left, right) =>
+        Number(left.packageRef.relationship === "referenced") -
+        Number(right.packageRef.relationship === "referenced"),
+    ),
+    {
+      ...options,
+      deps: options.packageDeps,
+    },
+  );
   const packageErrors = packages.filter((pkg) => pkg.action === "error");
   if (packageErrors.length > 0) {
     updateClawInstallRecordStatus(agentId, "partial", options);

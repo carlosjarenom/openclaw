@@ -17,7 +17,9 @@ function packageRef(overrides: Partial<PersistedClawPackageRef> = {}): Persisted
     version: "1.0.0",
     integrity: "sha256:audit",
     status: "complete",
-    ownership: "claw-installed",
+    relationship: "referenced",
+    origin: "claw-introduced",
+    independentOwner: false,
     installedAtMs: 1,
     updatedAtMs: 1,
     ...overrides,
@@ -29,6 +31,7 @@ function packageRefStore(...initial: PersistedClawPackageRef[]) {
   return {
     acquirePackageLease: vi.fn(() => ({ heartbeat: vi.fn(), release: vi.fn() })),
     readPackageRefs: vi.fn(() => refs),
+    readInstallRecords: vi.fn(() => []),
     claimPackageRef: vi.fn(
       (ref: PersistedClawPackageRef, status: PersistedClawPackageRef["status"]) => {
         const claimed = { ...ref, status };
@@ -48,7 +51,7 @@ function packageRefStore(...initial: PersistedClawPackageRef[]) {
 }
 
 describe("Claw package removal", () => {
-  it("retains global plugins while releasing the Claw reference", async () => {
+  it("retains referenced plugins by default while releasing the Claw reference", async () => {
     const ref = packageRef();
     const decisions = await planClawPackageRemovals(install, [ref], {
       deps: {
@@ -60,14 +63,79 @@ describe("Claw package removal", () => {
     expect(decisions).toMatchObject([
       {
         action: "retain",
-        reason:
-          "Plugins are global; removing a Claw releases its reference without uninstalling it.",
+        reason: "Referenced resources are retained unless a cleanup mode selects them.",
+      },
+    ]);
+  });
+
+  it("removes an unused Claw-introduced reference through the canonical plugin lifecycle", async () => {
+    const ref = packageRef();
+    const store = packageRefStore(ref);
+    const uninstallPlugin = vi.fn().mockResolvedValue(undefined);
+    const decisions = await planClawPackageRemovals(install, [ref], {
+      deps: {
+        ...store,
+        resolvePlugin: vi.fn().mockResolvedValue({
+          status: "found",
+          pluginId: "audit",
+          record: { source: "clawhub", integrity: "sha256:audit", installedAt: 1 },
+          installedVersion: "1.0.0",
+        }),
+      },
+      referencedCleanup: { mode: "remove-if-unused" },
+    });
+
+    expect(decisions).toMatchObject([{ action: "uninstall", pluginId: "audit" }]);
+    await expect(
+      applyClawPackageRemovals(decisions, {
+        deps: { ...store, uninstallPlugin },
+      }),
+    ).resolves.toMatchObject([{ action: "uninstalled" }]);
+    expect(uninstallPlugin).toHaveBeenCalledWith("audit", {
+      force: true,
+      invalidateRuntimeCache: false,
+      clawManaged: true,
+    });
+  });
+
+  it("requires an explicit override to remove a selected shared reference", async () => {
+    const ref = packageRef();
+    const other = packageRef({ agentId: "other" });
+    const deps = {
+      readPackageRefs: vi.fn().mockReturnValue([ref, other]),
+      resolvePlugin: vi.fn().mockResolvedValue({
+        status: "found",
+        pluginId: "audit",
+        record: { source: "clawhub", integrity: "sha256:audit", installedAt: 1 },
+        installedVersion: "1.0.0",
+      }),
+    };
+    const selected = ["plugin:audit@1.0.0"];
+
+    await expect(
+      planClawPackageRemovals(install, [ref], {
+        deps,
+        referencedCleanup: { mode: "remove-selected", selected },
+      }),
+    ).resolves.toMatchObject([
+      { action: "retain", blocked: true, affectedClawAgentIds: ["other"] },
+    ]);
+    await expect(
+      planClawPackageRemovals(install, [ref], {
+        deps,
+        referencedCleanup: { mode: "remove-selected", selected, allowConflicts: true },
+      }),
+    ).resolves.toMatchObject([
+      {
+        action: "uninstall",
+        allowConflicts: true,
+        affectedClawAgentIds: ["other"],
       },
     ]);
   });
 
   it.each([
-    ["independently-owned", packageRef({ ownership: "independently-owned" })],
+    ["independently-owned", packageRef({ independentOwner: true })],
     ["pending", packageRef({ status: "pending" })],
     ["shared", packageRef()],
   ])("retains %s artifacts while releasing the Claw reference", async (scenario, ref) => {
@@ -92,8 +160,7 @@ describe("Claw package removal", () => {
     expect(decisions).toMatchObject([
       {
         action: "retain",
-        reason:
-          "Plugins are global; removing a Claw releases its reference without uninstalling it.",
+        reason: "Referenced resources are retained unless a cleanup mode selects them.",
       },
     ]);
   });
@@ -114,8 +181,7 @@ describe("Claw package removal", () => {
     expect(decisions).toMatchObject([
       {
         action: "retain",
-        reason:
-          "Plugins are global; removing a Claw releases its reference without uninstalling it.",
+        reason: "Referenced resources are retained unless a cleanup mode selects them.",
       },
     ]);
   });
@@ -141,15 +207,19 @@ describe("Claw package removal", () => {
     expect(decisions).toMatchObject([
       {
         action: "retain",
-        reason:
-          "Plugins are global; removing a Claw releases its reference without uninstalling it.",
+        reason: "Referenced resources are retained unless a cleanup mode selects them.",
       },
     ]);
   });
 
   it("treats equal skill refs in separate agent workspaces as separate artifacts", async () => {
-    const ref = packageRef({ kind: "skill", ref: "triage" });
-    const other = packageRef({ kind: "skill", ref: "triage", agentId: "other" });
+    const ref = packageRef({ kind: "skill", ref: "triage", relationship: "managed" });
+    const other = packageRef({
+      kind: "skill",
+      ref: "triage",
+      relationship: "managed",
+      agentId: "other",
+    });
     const skillPlan = {
       workspaceDir: install.workspace,
       slug: "triage",
@@ -173,8 +243,13 @@ describe("Claw package removal", () => {
   });
 
   it("retains a skill referenced by another Claw in the same workspace", async () => {
-    const ref = packageRef({ kind: "skill", ref: "triage" });
-    const other = packageRef({ kind: "skill", ref: "triage", agentId: "other" });
+    const ref = packageRef({ kind: "skill", ref: "triage", relationship: "managed" });
+    const other = packageRef({
+      kind: "skill",
+      ref: "triage",
+      relationship: "managed",
+      agentId: "other",
+    });
     const decisions = await planClawPackageRemovals(install, [ref], {
       deps: {
         readPackageRefs: vi.fn().mockReturnValue([ref, other]),
@@ -192,7 +267,7 @@ describe("Claw package removal", () => {
   });
 
   it("retains an orphan skill when its workspace provenance is missing", async () => {
-    const ref = packageRef({ kind: "skill", ref: "triage" });
+    const ref = packageRef({ kind: "skill", ref: "triage", relationship: "managed" });
     const planSkill = vi.fn();
     const decisions = await planClawPackageRemovals({ ...install, workspace: "" }, [ref], {
       deps: {
@@ -237,8 +312,8 @@ describe("Claw package removal", () => {
   });
 
   it("releases a reference whose independent ownership was derived from install time", async () => {
-    const persisted = packageRef({ ownership: "claw-installed" });
-    const derived = packageRef({ ownership: "independently-owned" });
+    const persisted = packageRef({ independentOwner: false });
+    const derived = packageRef({ independentOwner: true });
     const store = packageRefStore(persisted);
 
     await expect(
@@ -249,6 +324,7 @@ describe("Claw package removal", () => {
             workspace: install.workspace,
             action: "retain",
             reason: "Package is independently owned outside this Claw.",
+            affectedClawAgentIds: [],
           },
         ],
         { deps: store },

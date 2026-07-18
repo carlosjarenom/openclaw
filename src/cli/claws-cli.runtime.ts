@@ -363,7 +363,27 @@ export async function runClawsRemoveCommand(
   if (requireRemoveConsent(opts, runtime)) {
     return;
   }
-  const plan = await buildClawRemovePlan(target);
+  const selected = opts.removeReferenced ?? [];
+  if (opts.removeUnused && selected.length > 0) {
+    runtime.error("Choose either --remove-unused or --remove-referenced, not both.");
+    runtime.exit(1);
+    return;
+  }
+  if (opts.forceReferenced && selected.length === 0) {
+    runtime.error("--force-referenced requires at least one --remove-referenced selector.");
+    runtime.exit(1);
+    return;
+  }
+  const referencedCleanup = selected.length
+    ? {
+        mode: "remove-selected" as const,
+        selected,
+        allowConflicts: Boolean(opts.forceReferenced),
+      }
+    : opts.removeUnused
+      ? { mode: "remove-if-unused" as const }
+      : { mode: "retain" as const };
+  const plan = await buildClawRemovePlan(target, { referencedCleanup });
   if (opts.dryRun || plan.blockers.length > 0) {
     if (opts.json) {
       writeRuntimeJson(runtime, plan);
@@ -388,6 +408,7 @@ export async function runClawsRemoveCommand(
   try {
     const result = await applyClawRemovePlan(plan, {
       consentPlanIntegrity: opts.planIntegrity,
+      referencedCleanup,
     });
     if (opts.json) {
       writeRuntimeJson(runtime, result);

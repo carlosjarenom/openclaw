@@ -449,7 +449,12 @@ describe("Claw status and remove", () => {
         version: "1.0.0",
         integrity: packageIntegrity,
       },
-      { env: current.env, ownership: "claw-installed" },
+      {
+        env: current.env,
+        relationship: "referenced",
+        origin: "claw-introduced",
+        independentOwner: false,
+      },
     );
     let config = current.getConfig();
     const resolvePlugin = vi.fn().mockResolvedValue({
@@ -523,7 +528,7 @@ describe("Claw status and remove", () => {
     expect(plan.blockers).toContainEqual(expect.objectContaining({ code: "claw_ambiguous" }));
   });
 
-  it("keeps Claw-installed plugin origin on every surviving Claw reference", async () => {
+  it("keeps Claw-introduced plugin origin on every surviving Claw reference", async () => {
     const first = await fixture({ id: "worker-a", name: "@acme/first" });
     const second = await fixture({ id: "worker-b", name: "@acme/second" });
     persistClawInstallRecord(first.plan, { env: first.env, nowMs: 1 });
@@ -538,12 +543,16 @@ describe("Claw status and remove", () => {
     persistClawPackageRef(first.plan, plugin, {
       env: first.env,
       nowMs: 1,
-      ownership: "claw-installed",
+      relationship: "referenced",
+      origin: "claw-introduced",
+      independentOwner: false,
     });
     persistClawPackageRef(second.plan, plugin, {
       env: first.env,
       nowMs: 2,
-      ownership: "claw-installed",
+      relationship: "referenced",
+      origin: "claw-introduced",
+      independentOwner: false,
     });
     let config: OpenClawConfig = {
       agents: { list: [first.plan.agent.config, second.plan.agent.config] },
@@ -559,7 +568,12 @@ describe("Claw status and remove", () => {
     });
 
     expect(readClawPackageRefs({ env: first.env, agentId: "worker-b" })).toMatchObject([
-      { ref: "audit", ownership: "claw-installed" },
+      {
+        ref: "audit",
+        relationship: "referenced",
+        origin: "claw-introduced",
+        independentOwner: false,
+      },
     ]);
   });
 });

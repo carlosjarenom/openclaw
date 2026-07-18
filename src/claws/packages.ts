@@ -325,8 +325,7 @@ export async function installClawPackages(
         const inheritsClawOrigin =
           existingRefs.length > 0 &&
           existingRefs.every(
-            (candidate) =>
-              candidate.origin === "claw-introduced" && !candidate.independentOwner,
+            (candidate) => candidate.origin === "claw-introduced" && !candidate.independentOwner,
           ) &&
           !ownerInstallIsNewerThanRefs(preflight.installedAt, existingRefs);
         installedPackages.push(

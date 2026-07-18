@@ -537,7 +537,9 @@ describe("claws cli", () => {
   it("prints a read-only remove plan without applying it", async () => {
     await runCli(["claws", "remove", "demo-agent", "--dry-run", "--json"]);
 
-    expect(mocks.buildClawRemovePlan).toHaveBeenCalledWith("demo-agent");
+    expect(mocks.buildClawRemovePlan).toHaveBeenCalledWith("demo-agent", {
+      referencedCleanup: { mode: "retain" },
+    });
     expect(mocks.applyClawRemovePlan).not.toHaveBeenCalled();
     expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
       schemaVersion: "openclaw.clawRemovePlan.v1",
@@ -558,7 +560,10 @@ describe("claws cli", () => {
 
     expect(mocks.applyClawRemovePlan).toHaveBeenCalledWith(
       expect.objectContaining({ planIntegrity: "sha256:remove-plan" }),
-      { consentPlanIntegrity: "sha256:remove-plan" },
+      {
+        consentPlanIntegrity: "sha256:remove-plan",
+        referencedCleanup: { mode: "retain" },
+      },
     );
     expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
       schemaVersion: "openclaw.clawRemoveResult.v1",
@@ -575,6 +580,45 @@ describe("claws cli", () => {
       schemaVersion: "openclaw.clawRemovePlan.v1",
       error: { code: "plan_integrity_required" },
     });
+  });
+
+  it("binds selected referenced cleanup and its conflict override into the plan", async () => {
+    await runCli([
+      "claws",
+      "remove",
+      "demo-agent",
+      "--dry-run",
+      "--remove-referenced",
+      "plugin:@acme/audit@1.0.0",
+      "--force-referenced",
+      "--json",
+    ]);
+
+    expect(mocks.buildClawRemovePlan).toHaveBeenCalledWith("demo-agent", {
+      referencedCleanup: {
+        mode: "remove-selected",
+        selected: ["plugin:@acme/audit@1.0.0"],
+        allowConflicts: true,
+      },
+    });
+  });
+
+  it("rejects ambiguous referenced cleanup modes", async () => {
+    await runCli([
+      "claws",
+      "remove",
+      "demo-agent",
+      "--dry-run",
+      "--remove-unused",
+      "--remove-referenced",
+      "plugin:@acme/audit@1.0.0",
+      "--json",
+    ]);
+
+    expect(mocks.buildClawRemovePlan).not.toHaveBeenCalled();
+    expect(mocks.errors).toContain(
+      "Choose either --remove-unused or --remove-referenced, not both.",
+    );
   });
 
   it("fails closed when remove has neither preview nor consent", async () => {

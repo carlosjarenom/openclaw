@@ -1,3 +1,4 @@
+import { runPluginUninstallCommand } from "../cli/plugins-uninstall-command.js";
 import { normalizeClawHubSha256Integrity } from "../infra/clawhub.js";
 import { resolveInstalledClawHubPlugin } from "../plugins/plugin-install-preflight.js";
 import {
@@ -19,11 +20,23 @@ import {
   type PersistedClawPackageRef,
 } from "./provenance.js";
 
-type ClawPackageRemovalDecision = {
+export type ClawReferencedCleanupMode = "retain" | "remove-if-unused" | "remove-selected";
+
+export type ClawReferencedCleanup = {
+  mode: ClawReferencedCleanupMode;
+  selected?: readonly string[];
+  allowConflicts?: boolean;
+};
+
+export type ClawPackageRemovalDecision = {
   packageRef: PersistedClawPackageRef;
   workspace: string;
   action: "uninstall" | "retain";
+  blocked?: boolean;
+  allowConflicts?: boolean;
   reason?: string;
+  affectedClawAgentIds: string[];
+  pluginId?: string;
   skillPlan?: ClawHubSkillUninstallPlan;
 };
 
@@ -42,6 +55,7 @@ export type PackageRemovalDeps = {
   resolvePlugin?: typeof resolveInstalledClawHubPlugin;
   planSkill?: typeof planClawHubSkillUninstall;
   uninstallSkill?: typeof applyClawHubSkillUninstall;
+  uninstallPlugin?: typeof runPluginUninstallCommand;
   acquirePackageLease?: typeof acquireClawPackageLifecycleLease;
 };
 
@@ -62,6 +76,48 @@ function sameVersionedArtifact(
   return sameArtifact(left, right) && left.version === right.version;
 }
 
+export function clawPackageRemovalSelector(packageRef: PersistedClawPackageRef): string {
+  return `${packageRef.kind}:${packageRef.ref}@${packageRef.version}`;
+}
+
+function sameRecordedState(left: PersistedClawPackageRef, right: PersistedClawPackageRef): boolean {
+  return (
+    left.status === right.status &&
+    left.relationship === right.relationship &&
+    left.origin === right.origin &&
+    (left.independentOwner === right.independentOwner ||
+      (right.independentOwner && !left.independentOwner))
+  );
+}
+
+function otherClawAgentIds(params: {
+  packageRef: PersistedClawPackageRef;
+  workspace: string;
+  refs: PersistedClawPackageRef[];
+  installs: PersistedClawInstall[];
+  statuses?: ReadonlySet<PersistedClawPackageRef["status"]>;
+}): string[] {
+  return params.refs
+    .filter((candidate) => {
+      if (
+        candidate.agentId === params.packageRef.agentId ||
+        !sameArtifact(candidate, params.packageRef) ||
+        (params.statuses && !params.statuses.has(candidate.status))
+      ) {
+        return false;
+      }
+      if (params.packageRef.kind === "plugin") {
+        return true;
+      }
+      return params.installs.some(
+        (install) =>
+          install.agentId === candidate.agentId && install.workspace === params.workspace,
+      );
+    })
+    .map((candidate) => candidate.agentId)
+    .toSorted();
+}
+
 function hasAnotherClawOwner(params: {
   packageRef: PersistedClawPackageRef;
   workspace: string;
@@ -69,21 +125,7 @@ function hasAnotherClawOwner(params: {
   installs: PersistedClawInstall[];
   statuses?: ReadonlySet<PersistedClawPackageRef["status"]>;
 }): boolean {
-  return params.refs.some((candidate) => {
-    if (
-      candidate.agentId === params.packageRef.agentId ||
-      !sameArtifact(candidate, params.packageRef) ||
-      (params.statuses && !params.statuses.has(candidate.status))
-    ) {
-      return false;
-    }
-    if (params.packageRef.kind === "plugin") {
-      return true;
-    }
-    return params.installs.some(
-      (install) => install.agentId === candidate.agentId && install.workspace === params.workspace,
-    );
-  });
+  return otherClawAgentIds(params).length > 0;
 }
 
 function ownerInstallIsNewer(
@@ -139,9 +181,9 @@ export async function inspectClawPackage(
     }
     return {
       ...packageRef,
-      ownership: ownerInstallIsNewer(resolution.record.installedAt, packageRef)
-        ? "independently-owned"
-        : packageRef.ownership,
+      independentOwner:
+        packageRef.independentOwner ||
+        ownerInstallIsNewer(resolution.record.installedAt, packageRef),
       state: "present",
     };
   }
@@ -160,9 +202,8 @@ export async function inspectClawPackage(
   return skill.ok
     ? {
         ...packageRef,
-        ownership: ownerInstallIsNewer(skill.plan.installedAt, packageRef)
-          ? "independently-owned"
-          : packageRef.ownership,
+        independentOwner:
+          packageRef.independentOwner || ownerInstallIsNewer(skill.plan.installedAt, packageRef),
         state: "present",
       }
     : { ...packageRef, state: skill.code, message: skill.error };
@@ -171,61 +212,149 @@ export async function inspectClawPackage(
 export async function planClawPackageRemovals(
   install: PersistedClawInstall,
   packages: PersistedClawPackageRef[],
-  options: OpenClawStateDatabaseOptions & { deps?: PackageRemovalDeps } = {},
+  options: OpenClawStateDatabaseOptions & {
+    deps?: PackageRemovalDeps;
+    referencedCleanup?: ClawReferencedCleanup;
+  } = {},
 ): Promise<ClawPackageRemovalDecision[]> {
   const deps = options.deps ?? {};
+  const cleanup = options.referencedCleanup ?? { mode: "retain" };
+  const selected = new Set(cleanup.selected ?? []);
   const allRefs = (deps.readPackageRefs ?? readClawPackageRefs)(options);
-  const allInstalls = (deps.readInstallRecords ?? readClawInstallRecords)(options);
+  let cachedInstalls: PersistedClawInstall[] | undefined;
+  const allInstalls = (): PersistedClawInstall[] =>
+    (cachedInstalls ??= (deps.readInstallRecords ?? readClawInstallRecords)(options));
   const decisions: ClawPackageRemovalDecision[] = [];
   for (const packageRef of packages) {
+    const affectedClawAgentIds = otherClawAgentIds({
+      packageRef,
+      workspace: install.workspace,
+      refs: allRefs,
+      installs: packageRef.kind === "plugin" || !install.workspace ? [] : allInstalls(),
+      statuses: new Set(["pending", "complete"]),
+    });
     const retain = (reason: string): void => {
-      decisions.push({ packageRef, workspace: install.workspace, action: "retain", reason });
+      decisions.push({
+        packageRef,
+        workspace: install.workspace,
+        action: "retain",
+        reason,
+        affectedClawAgentIds,
+      });
     };
     if (packageRef.status !== "complete") {
       retain("Package installation is incomplete.");
       continue;
     }
-    if (packageRef.kind === "plugin") {
-      retain("Plugins are global; removing a Claw releases its reference without uninstalling it.");
-      continue;
-    }
-    if (!install.workspace) {
-      retain("Skill workspace provenance is missing.");
-      continue;
-    }
-    if (packageRef.ownership !== "claw-installed") {
-      retain("Package is independently owned outside this Claw.");
-      continue;
-    }
-    if (
-      hasAnotherClawOwner({
+    const selector = clawPackageRemovalSelector(packageRef);
+    const explicitlySelected = cleanup.mode === "remove-selected" && selected.has(selector);
+    const managedCleanup = packageRef.relationship === "managed";
+    if (explicitlySelected && managedCleanup) {
+      decisions.push({
         packageRef,
         workspace: install.workspace,
-        refs: allRefs,
-        installs: allInstalls,
-      })
-    ) {
+        action: "retain",
+        blocked: true,
+        reason: "--remove-referenced only accepts resources with a referenced relationship.",
+        affectedClawAgentIds,
+      });
+      continue;
+    }
+    if (!managedCleanup && !explicitlySelected && cleanup.mode !== "remove-if-unused") {
+      retain("Referenced resources are retained unless a cleanup mode selects them.");
+      continue;
+    }
+    if (!explicitlySelected && affectedClawAgentIds.length > 0) {
       retain("Another Claw still references this package.");
       continue;
     }
-    const skill = await (deps.planSkill ?? planClawHubSkillUninstall)({
-      workspaceDir: install.workspace,
-      slug: packageRef.ref,
-      expectedVersion: packageRef.version,
-    });
-    if (!skill.ok) {
-      retain(skill.error);
+    if (
+      !explicitlySelected &&
+      (packageRef.independentOwner || packageRef.origin === "pre-existing")
+    ) {
+      retain("Package has a current non-Claw owner or pre-existing origin.");
       continue;
     }
-    if (ownerInstallIsNewer(skill.plan.installedAt, packageRef)) {
-      retain("Package is independently owned outside this Claw.");
+
+    let pluginId: string | undefined;
+    let ownerIsNewer: boolean;
+    let skillPlan: ClawHubSkillUninstallPlan | undefined;
+    if (packageRef.kind === "plugin") {
+      const resolution = await (deps.resolvePlugin ?? resolveInstalledClawHubPlugin)({
+        clawhubPackage: packageRef.ref,
+      });
+      if (resolution.status !== "found") {
+        retain(
+          resolution.status === "ambiguous"
+            ? "Installed plugin identity is ambiguous."
+            : "Installed plugin is missing.",
+        );
+        continue;
+      }
+      if (
+        resolution.installedVersion !== packageRef.version ||
+        !pluginIntegrityMatches(resolution.record.integrity, packageRef.integrity)
+      ) {
+        retain("Installed plugin changed after the Claw was added.");
+        continue;
+      }
+      pluginId = resolution.pluginId;
+      ownerIsNewer = ownerInstallIsNewer(resolution.record.installedAt, packageRef);
+    } else {
+      if (!install.workspace) {
+        retain("Skill workspace provenance is missing.");
+        continue;
+      }
+      const skill = await (deps.planSkill ?? planClawHubSkillUninstall)({
+        workspaceDir: install.workspace,
+        slug: packageRef.ref,
+        expectedVersion: packageRef.version,
+      });
+      if (!skill.ok) {
+        retain(skill.error);
+        continue;
+      }
+      skillPlan = skill.plan;
+      ownerIsNewer = ownerInstallIsNewer(skill.plan.installedAt, packageRef);
+    }
+
+    const independentlyOwned = packageRef.independentOwner || ownerIsNewer;
+    const hasConflicts =
+      affectedClawAgentIds.length > 0 || independentlyOwned || packageRef.origin === "pre-existing";
+    if (!explicitlySelected && hasConflicts) {
+      retain(
+        affectedClawAgentIds.length > 0
+          ? "Another Claw still references this package."
+          : "Package has a current non-Claw owner or pre-existing origin.",
+      );
+      continue;
+    }
+    if (!explicitlySelected && packageRef.origin !== "claw-introduced") {
+      retain("Only Claw-introduced referenced resources qualify for remove-if-unused.");
+      continue;
+    }
+    if (explicitlySelected && hasConflicts && !cleanup.allowConflicts) {
+      decisions.push({
+        packageRef,
+        workspace: install.workspace,
+        action: "retain",
+        blocked: true,
+        reason:
+          "Selected resource has other Claw dependents, a non-Claw owner, or pre-existing origin; explicit conflict override is required.",
+        affectedClawAgentIds,
+        ...(pluginId ? { pluginId } : {}),
+        ...(skillPlan ? { skillPlan } : {}),
+      });
       continue;
     }
     decisions.push({
       packageRef,
       workspace: install.workspace,
       action: "uninstall",
-      skillPlan: skill.plan,
+      ...(explicitlySelected && cleanup.allowConflicts ? { allowConflicts: true } : {}),
+      affectedClawAgentIds,
+      ...(pluginId ? { pluginId } : {}),
+      ...(skillPlan ? { skillPlan } : {}),
     });
   }
   return decisions;
@@ -270,18 +399,20 @@ export async function applyClawPackageRemovals(
       }
       packageLease = maintainClawPackageLifecycleLease(acquiredLease);
       const currentRefs = (deps.readPackageRefs ?? readClawPackageRefs)(options);
-      const currentInstalls = (deps.readInstallRecords ?? readClawInstallRecords)(options);
+      const currentInstalls =
+        decision.packageRef.kind === "plugin"
+          ? []
+          : (deps.readInstallRecords ?? readClawInstallRecords)(options);
       const currentRef = currentRefs.find(
         (candidate) =>
           candidate.agentId === decision.packageRef.agentId &&
           sameVersionedArtifact(candidate, decision.packageRef),
       );
+      if (decision.blocked) {
+        throw new Error(decision.reason ?? "Package cleanup is blocked.");
+      }
       if (decision.action === "retain") {
-        const ownershipMatches =
-          currentRef?.ownership === decision.packageRef.ownership ||
-          (decision.packageRef.ownership === "independently-owned" &&
-            currentRef?.ownership === "claw-installed");
-        if (!currentRef || currentRef.status !== decision.packageRef.status || !ownershipMatches) {
+        if (!currentRef || !sameRecordedState(currentRef, decision.packageRef)) {
           throw new Error(
             `Package ${decision.packageRef.ref}@${decision.packageRef.version} ownership changed after removal planning.`,
           );
@@ -292,7 +423,10 @@ export async function applyClawPackageRemovals(
         }
         if (decision.reason === "Another Claw still references this package.") {
           const postClaimRefs = (deps.readPackageRefs ?? readClawPackageRefs)(options);
-          const postClaimInstalls = (deps.readInstallRecords ?? readClawInstallRecords)(options);
+          const postClaimInstalls =
+            decision.packageRef.kind === "plugin"
+              ? []
+              : (deps.readInstallRecords ?? readClawInstallRecords)(options);
           if (
             !hasAnotherClawOwner({
               packageRef: decision.packageRef,
@@ -320,8 +454,8 @@ export async function applyClawPackageRemovals(
       if (
         !currentRef ||
         currentRef.status !== "complete" ||
-        currentRef.ownership !== "claw-installed" ||
-        sharedPackage
+        !sameRecordedState(currentRef, decision.packageRef) ||
+        (sharedPackage && !decision.allowConflicts)
       ) {
         throw new Error(
           `Package ${decision.packageRef.ref}@${decision.packageRef.version} ownership changed after removal planning.`,
@@ -330,7 +464,10 @@ export async function applyClawPackageRemovals(
       (deps.claimPackageRef ?? updateClawPackageRefStatus)(currentRef, "pending", options);
       claimed = true;
       const postClaimRefs = (deps.readPackageRefs ?? readClawPackageRefs)(options);
-      const postClaimInstalls = (deps.readInstallRecords ?? readClawInstallRecords)(options);
+      const postClaimInstalls =
+        decision.packageRef.kind === "plugin"
+          ? []
+          : (deps.readInstallRecords ?? readClawInstallRecords)(options);
       const postClaimRef = postClaimRefs.find(
         (candidate) =>
           candidate.agentId === decision.packageRef.agentId &&
@@ -346,21 +483,37 @@ export async function applyClawPackageRemovals(
       if (
         !postClaimRef ||
         postClaimRef.status !== "pending" ||
-        postClaimRef.ownership !== "claw-installed" ||
-        postClaimShared
+        postClaimRef.relationship !== decision.packageRef.relationship ||
+        postClaimRef.origin !== decision.packageRef.origin ||
+        (postClaimRef.independentOwner !== decision.packageRef.independentOwner &&
+          !decision.packageRef.independentOwner) ||
+        (postClaimShared && !decision.allowConflicts)
       ) {
         throw new Error(
           `Package ${decision.packageRef.ref}@${decision.packageRef.version} ownership changed while claiming removal.`,
         );
       }
-      if (decision.packageRef.kind !== "skill" || !decision.skillPlan) {
-        throw new Error("Global plugins cannot be uninstalled by Claw removal.");
+      if (decision.packageRef.kind === "plugin") {
+        if (!decision.pluginId) {
+          throw new Error("Plugin removal plan is missing canonical install identity.");
+        }
+        await (deps.uninstallPlugin ?? runPluginUninstallCommand)(decision.pluginId, {
+          force: true,
+          invalidateRuntimeCache: false,
+          clawManaged: true,
+        });
+      } else {
+        if (!decision.skillPlan) {
+          throw new Error("Skill removal plan is missing canonical uninstall state.");
+        }
+        const removed = await (deps.uninstallSkill ?? applyClawHubSkillUninstall)(
+          decision.skillPlan,
+        );
+        if (!removed.ok) {
+          throw new Error(removed.error);
+        }
       }
-      const removed = await (deps.uninstallSkill ?? applyClawHubSkillUninstall)(decision.skillPlan);
       packageLease.assertCurrent();
-      if (!removed.ok) {
-        throw new Error(removed.error);
-      }
       (deps.claimPackageRef ?? updateClawPackageRefStatus)(
         decision.packageRef,
         "complete",
