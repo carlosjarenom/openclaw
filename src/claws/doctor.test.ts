@@ -149,6 +149,38 @@ describe("collectClawStateHealthFindings", () => {
     await expect(readdir(dirname(databasePath))).resolves.toEqual(beforeEntries);
   });
 
+  it.each(["claw_workspace_files", "claw_package_refs", "claw_mcp_server_refs", "claw_cron_refs"])(
+    "reports orphaned ownership in %s without a root install table",
+    async (table) => {
+      const current = await fixture();
+      const databasePath = resolveOpenClawStateSqlitePath(current.env);
+      await mkdir(dirname(databasePath), { recursive: true });
+      const database = new DatabaseSync(databasePath);
+      database.exec(`
+      CREATE TABLE ${table} (agent_id TEXT NOT NULL);
+      INSERT INTO ${table} (agent_id) VALUES ('orphaned-agent');
+    `);
+      database.close();
+      const before = await readFile(databasePath);
+
+      await expect(
+        collectClawStateHealthFindings({
+          env: current.env,
+          cfg: {},
+          sourceMcpServers: {},
+        }),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          severity: "warning",
+          message:
+            'Claw ownership references for agent "orphaned-agent" have no root install record.',
+          path: "claws.orphaned-agent",
+        }),
+      ]);
+      await expect(readFile(databasePath)).resolves.toEqual(before);
+    },
+  );
+
   it("reports an unreadable state database as a structured finding", async () => {
     const current = await fixture();
     const databasePath = resolveOpenClawStateSqlitePath(current.env);

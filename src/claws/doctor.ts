@@ -295,6 +295,16 @@ function orphanedAgentIds(options: OpenClawStateDatabaseOptions): string[] {
   return [...referenced].filter((agentId) => !installed.has(agentId)).toSorted();
 }
 
+function orphanedReferenceFinding(agentId: string): HealthFinding {
+  return finding({
+    message: `Claw ownership references for agent ${JSON.stringify(agentId)} have no root install record.`,
+    path: `claws.${agentId}`,
+    target: agentId,
+    requirement: "Claw-owned resources should have a matching claw_installs row",
+    fixHint: "Inspect the state database and live resources before deleting orphaned references.",
+  });
+}
+
 export async function collectClawStateHealthFindings(
   options: ClawDoctorOptions = {},
 ): Promise<readonly HealthFinding[]> {
@@ -307,8 +317,9 @@ export async function collectClawStateHealthFindings(
     if (!database) {
       return [];
     }
+    const orphanedRefs = orphanedAgentIds({ ...options, database, readOnly: true });
     if (!tableExists(database.db, "claw_installs")) {
-      return [];
+      return orphanedRefs.map(orphanedReferenceFinding);
     }
     let sourceMcpServers = options.sourceMcpServers;
     if (!sourceMcpServers) {
@@ -343,17 +354,8 @@ export async function collectClawStateHealthFindings(
     const findings = status.records.flatMap((record) =>
       collectInstallFindings(record, cronInventory),
     );
-    for (const agentId of orphanedAgentIds({ ...options, database, readOnly: true })) {
-      findings.push(
-        finding({
-          message: `Claw ownership references for agent ${JSON.stringify(agentId)} have no root install record.`,
-          path: `claws.${agentId}`,
-          target: agentId,
-          requirement: "Claw-owned resources should have a matching claw_installs row",
-          fixHint:
-            "Inspect the state database and live resources before deleting orphaned references.",
-        }),
-      );
+    for (const agentId of orphanedRefs) {
+      findings.push(orphanedReferenceFinding(agentId));
     }
     return findings;
   } catch (error) {
