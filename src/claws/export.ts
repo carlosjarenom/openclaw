@@ -6,6 +6,7 @@ import { openLocalAgentAvatarFile } from "../agents/identity-avatar-file.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readFileDescriptorBoundedSync } from "../infra/file-descriptor-read.js";
 import { root as fsSafeRoot } from "../infra/fs-safe.js";
+import { isRenderableAvatarImageDataUrl } from "../shared/avatar-limits.js";
 import { AVATAR_MAX_BYTES, isAvatarDataUrl, isAvatarHttpUrl } from "../shared/avatar-policy.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import { resolveUserPath } from "../utils.js";
@@ -146,7 +147,7 @@ function readPortableAvatar(params: {
     return {};
   }
   if (isAvatarDataUrl(source)) {
-    return { source };
+    return isRenderableAvatarImageDataUrl(source) ? { source } : {};
   }
   const opened = openLocalAgentAvatarFile({
     cfg: params.config,
@@ -190,6 +191,12 @@ export async function exportClawAgent(
     throw new ClawExportError(
       "claw_not_found",
       `No installed Claw agent matches ${JSON.stringify(agentId)}.`,
+    );
+  }
+  if (record.install.status !== "complete") {
+    throw new ClawExportError(
+      "install_incomplete",
+      `Installed Claw agent ${JSON.stringify(agentId)} is in ${JSON.stringify(record.install.status)} state; finish or repair it before export.`,
     );
   }
   const agent = options.config.agents?.list?.find((candidate) => candidate.id === agentId);

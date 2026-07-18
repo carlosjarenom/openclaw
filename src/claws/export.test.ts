@@ -7,7 +7,7 @@ import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js
 import { applyClawAddPlan } from "./add.js";
 import { exportClawAgent } from "./export.js";
 import { buildClawAddPlan } from "./lifecycle.js";
-import { persistClawPackageRef } from "./provenance.js";
+import { persistClawPackageRef, updateClawInstallRecordStatus } from "./provenance.js";
 import { parseClawManifest } from "./schema.js";
 import type { ClawSourceIdentity } from "./types.js";
 
@@ -131,6 +131,18 @@ describe("exportClawAgent", () => {
     });
   });
 
+  it("rejects a partial install rather than exporting an incomplete snapshot", async () => {
+    const fixture = await installedFixture();
+    updateClawInstallRecordStatus("worker", "partial", { env: fixture.env });
+
+    await expect(
+      exportClawAgent("worker", join(fixture.root, "exported-partial"), {
+        env: fixture.env,
+        config: fixture.config,
+      }),
+    ).rejects.toMatchObject({ code: "install_incomplete" });
+  });
+
   it("packages a safe workspace-relative avatar as a sidecar", async () => {
     const fixture = await installedFixture();
     const avatarPath = join(fixture.plan.agent.workspace, "avatars", "worker.png");
@@ -164,6 +176,23 @@ describe("exportClawAgent", () => {
       env: fixture.env,
       config: fixture.config,
     });
+
+    expect(result.manifest.agent.identity?.avatar).toBeUndefined();
+  });
+
+  it("omits a non-renderable data URL avatar", async () => {
+    const fixture = await installedFixture();
+    const agent = fixture.config.agents!.list!.find((candidate) => candidate.id === "worker")!;
+    agent.identity = { avatar: "data:text/plain;base64,bm90IGFuIGltYWdl" };
+
+    const result = await exportClawAgent(
+      "worker",
+      join(fixture.root, "exported-invalid-data-avatar"),
+      {
+        env: fixture.env,
+        config: fixture.config,
+      },
+    );
 
     expect(result.manifest.agent.identity?.avatar).toBeUndefined();
   });
