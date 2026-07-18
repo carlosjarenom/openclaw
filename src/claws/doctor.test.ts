@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { McpServerConfig } from "../config/types.mcp.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
@@ -296,6 +296,51 @@ describe("collectClawStateHealthFindings", () => {
         },
       }),
     ).resolves.toEqual([]);
+  });
+
+  it("does not load MCP config when no Claw owns an MCP server", async () => {
+    const current = await installFixture({ withFile: true });
+    await writeFile(join(current.plan.agent.workspace, "SOUL.md"), "local edit\n", "utf8");
+    const listMcpServers = vi.fn(async () => {
+      throw new Error("MCP config unavailable");
+    });
+
+    await expect(
+      collectClawStateHealthFindings({
+        env: current.env,
+        cfg: current.getConfig(),
+        listMcpServers,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        message: expect.stringContaining("workspace file changed"),
+        path: "claws.worker.workspace.SOUL.md",
+      }),
+    ]);
+    expect(listMcpServers).not.toHaveBeenCalled();
+  });
+
+  it("reports MCP config failure when a Claw owns an MCP server", async () => {
+    const current = await installFixture({ withMcp: true });
+    const listMcpServers = vi.fn(async () => ({
+      ok: false as const,
+      path: "/tmp/openclaw.json",
+      error: "MCP config unavailable",
+    }));
+
+    await expect(
+      collectClawStateHealthFindings({
+        env: current.env,
+        cfg: current.getConfig(),
+        listMcpServers,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        severity: "error",
+        message: expect.stringContaining("MCP config unavailable"),
+      }),
+    ]);
+    expect(listMcpServers).toHaveBeenCalledOnce();
   });
 
   it("uses source MCP placeholders instead of resolved secret values", async () => {

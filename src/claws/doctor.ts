@@ -295,6 +295,17 @@ function orphanedAgentIds(options: OpenClawStateDatabaseOptions): string[] {
   return [...referenced].filter((agentId) => !installed.has(agentId)).toSorted();
 }
 
+function hasClawMcpServerRefs(db: DatabaseSync): boolean {
+  return (
+    tableExists(db, "claw_mcp_server_refs") &&
+    Boolean(
+      db /* sqlite-allow-raw: read-only Claw doctor MCP inventory existence probe. */
+        .prepare("SELECT 1 FROM claw_mcp_server_refs LIMIT 1")
+        .get(),
+    )
+  );
+}
+
 function orphanedReferenceFinding(agentId: string): HealthFinding {
   return finding({
     message: `Claw ownership references for agent ${JSON.stringify(agentId)} have no root install record.`,
@@ -321,8 +332,8 @@ export async function collectClawStateHealthFindings(
     if (!tableExists(database.db, "claw_installs")) {
       return orphanedRefs.map(orphanedReferenceFinding);
     }
-    let sourceMcpServers = options.sourceMcpServers;
-    if (!sourceMcpServers) {
+    let sourceMcpServers = options.sourceMcpServers ?? {};
+    if (hasClawMcpServerRefs(database.db) && !options.sourceMcpServers) {
       const listed = await (options.listMcpServers ?? listConfiguredMcpServers)();
       if (!listed.ok) {
         throw new Error(listed.error);
