@@ -1493,6 +1493,7 @@ async function runCoreHealthFindingNote(
     cfg: ctx.cfg,
     cwd: resolveAgentWorkspaceDir(ctx.cfg, resolveDefaultAgentId(ctx.cfg)),
     configPath: ctx.configPath,
+    allowExecSecretRefs: ctx.options.allowExec === true,
   });
   if (findings.length === 0) {
     return;
