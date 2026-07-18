@@ -1,19 +1,11 @@
-import { createHash } from "node:crypto";
 import { stableStringify } from "../agents/stable-stringify.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { root as fsSafeRoot } from "../infra/fs-safe.js";
 import {
   closeOpenClawAgentDatabaseByPath,
   resolveOpenClawAgentSqlitePath,
 } from "../state/openclaw-agent-db.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
-import {
-  claimClawAgentConfigRemoval,
-  digestClawAgentConfig,
-  digestClawAgentRemovalSurface,
-  type ConfigCommit,
-} from "./lifecycle-config-removal.js";
 import {
   deleteClawCronRef,
   markClawCronRefRemoved,
@@ -22,16 +14,24 @@ import {
   type PersistedClawCronRef,
 } from "./cron.js";
 import {
+  claimClawAgentConfigRemoval,
+  digestClawAgentConfig,
+  digestClawAgentRemovalSurface,
+  type ConfigCommit,
+} from "./lifecycle-config-removal.js";
+import {
   clawRemoveQuietRuntime,
-  clawStateTableExists,
+  ClawRemoveError,
   cleanupClawAgentFilesystem,
   deletionEffects,
+  inspectClawWorkspaceFile,
   readAllClawWorkspaceFiles,
   readAttachedCronJobs,
   releaseClawRemoveRows,
   removeClawWorkspaceFile,
   synthesizeOrphanInstall,
   workspaceContainsUntrackedEntries,
+  type ClawManagedFileStatus,
   type ClawTrashPath,
   type RemovedWorkspaceFile,
 } from "./lifecycle-delete-support.js";
@@ -52,17 +52,13 @@ import {
   type PersistedClawInstall,
 } from "./provenance.js";
 import { CLAW_OUTPUT_STABILITY } from "./types.js";
-import { readClawWorkspaceFiles, type PersistedClawWorkspaceFile } from "./workspace.js";
+import { readClawWorkspaceFiles } from "./workspace.js";
+
+export { ClawRemoveError } from "./lifecycle-delete-support.js";
 
 const CLAW_STATUS_SCHEMA_VERSION = "openclaw.clawStatus.v1" as const;
 export const CLAW_REMOVE_PLAN_SCHEMA_VERSION = "openclaw.clawRemovePlan.v1" as const;
 export const CLAW_REMOVE_RESULT_SCHEMA_VERSION = "openclaw.clawRemoveResult.v1" as const;
-const MAX_FILE_BYTES = 1024 * 1024;
-
-type ClawManagedFileStatus = PersistedClawWorkspaceFile & {
-  state: "unchanged" | "modified" | "missing" | "unsafe";
-  message?: string;
-};
 type ClawStatusRecord = {
   install: PersistedClawInstall;
   orphaned?: boolean;
@@ -141,41 +137,6 @@ type ClawRemoveResult = {
   error?: { code: string; message: string };
 };
 
-export class ClawRemoveError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "ClawRemoveError";
-  }
-}
-
-async function inspectFile(record: PersistedClawWorkspaceFile): Promise<ClawManagedFileStatus> {
-  try {
-    const workspace = await fsSafeRoot(record.workspace, {
-      hardlinks: "reject",
-      maxBytes: MAX_FILE_BYTES,
-      symlinks: "reject",
-    });
-    if (!(await workspace.exists(record.path))) {
-      return { ...record, state: "missing" };
-    }
-    const content = await workspace.readBytes(record.path, { maxBytes: MAX_FILE_BYTES });
-    const digest = `sha256:${createHash("sha256").update(content).digest("hex")}`;
-    return { ...record, state: digest === record.contentDigest ? "unchanged" : "modified" };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { ...record, state: "missing" };
-    }
-    return {
-      ...record,
-      state: "unsafe",
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
 export async function readClawStatus(
   target?: string,
   options: OpenClawStateDatabaseOptions & {
@@ -229,7 +190,7 @@ export async function readClawStatus(
         : digestClawAgentConfig(agent) === install.agentConfigDigest
           ? "present"
           : "modified",
-      workspaceFiles: await Promise.all(workspaceFiles.map(inspectFile)),
+      workspaceFiles: await Promise.all(workspaceFiles.map(inspectClawWorkspaceFile)),
       packages: await Promise.all(
         packageRefs.map((packageRef) =>
           inspectClawPackage(install, packageRef, options.packageDeps),

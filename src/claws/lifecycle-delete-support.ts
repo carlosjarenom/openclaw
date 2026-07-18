@@ -14,9 +14,9 @@ import {
 } from "../agents/workspace-state-store.js";
 import { pruneAgentConfig } from "../commands/agents.config.js";
 import { moveToTrash } from "../commands/onboard-helpers.js";
-import { root as fsSafeRoot, FsSafeError } from "../infra/fs-safe.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { root as fsSafeRoot, FsSafeError } from "../infra/fs-safe.js";
 import type { RuntimeEnv } from "../runtime.js";
 import {
   openOpenClawStateDatabase,
@@ -37,6 +37,16 @@ type WorkspaceFileRow = {
   created_at_ms: number | bigint;
   updated_at_ms: number | bigint;
 };
+
+export class ClawRemoveError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ClawRemoveError";
+  }
+}
 
 export function clawStateTableExists(db: DatabaseSync, name: string): boolean {
   return Boolean(
@@ -286,6 +296,38 @@ export type RemovedWorkspaceFile = {
   message?: string;
 };
 
+export type ClawManagedFileStatus = PersistedClawWorkspaceFile & {
+  state: "unchanged" | "modified" | "missing" | "unsafe";
+  message?: string;
+};
+
+export async function inspectClawWorkspaceFile(
+  record: PersistedClawWorkspaceFile,
+): Promise<ClawManagedFileStatus> {
+  try {
+    const workspace = await fsSafeRoot(record.workspace, {
+      hardlinks: "reject",
+      maxBytes: 1024 * 1024,
+      symlinks: "reject",
+    });
+    if (!(await workspace.exists(record.path))) {
+      return { ...record, state: "missing" };
+    }
+    const content = await workspace.readBytes(record.path, { maxBytes: 1024 * 1024 });
+    const digest = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+    return { ...record, state: digest === record.contentDigest ? "unchanged" : "modified" };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { ...record, state: "missing" };
+    }
+    return {
+      ...record,
+      state: "unsafe",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export async function removeClawWorkspaceFile(
   record: ClawRemovableWorkspaceFile,
 ): Promise<RemovedWorkspaceFile> {
@@ -330,7 +372,7 @@ export function releaseClawRemoveRows(
   options: OpenClawStateDatabaseOptions,
 ): void {
   runOpenClawStateWriteTransaction(({ db }) => {
-    if (tableExists(db, "claw_workspace_files")) {
+    if (clawStateTableExists(db, "claw_workspace_files")) {
       for (const file of files.filter((candidate) => candidate.action !== "error")) {
         db /* sqlite-allow-raw: remove one owned Claw workspace-file row. */
           .prepare("DELETE FROM claw_workspace_files WHERE agent_id = ? AND target_path = ?")
@@ -340,12 +382,12 @@ export function releaseClawRemoveRows(
     if (!complete) {
       return;
     }
-    if (tableExists(db, "claw_package_refs")) {
+    if (clawStateTableExists(db, "claw_package_refs")) {
       db /* sqlite-allow-raw: release package refs for a removed Claw agent. */
         .prepare("DELETE FROM claw_package_refs WHERE agent_id = ?")
         .run(agentId);
     }
-    if (tableExists(db, "claw_installs")) {
+    if (clawStateTableExists(db, "claw_installs")) {
       db /* sqlite-allow-raw: remove the completed Claw install owner row. */
         .prepare("DELETE FROM claw_installs WHERE agent_id = ?")
         .run(agentId);

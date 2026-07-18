@@ -8,8 +8,8 @@ import {
   openOpenClawStateDatabase,
 } from "../state/openclaw-state-db.js";
 import { applyClawAddPlan } from "./add.js";
-import { claimClawAgentConfigRemoval } from "./lifecycle-config-removal.js";
 import { markClawCronRefRemoved } from "./cron.js";
+import { claimClawAgentConfigRemoval } from "./lifecycle-config-removal.js";
 import { applyClawRemovePlan, buildClawRemovePlan, readClawStatus } from "./lifecycle-state.js";
 import { buildClawAddPlan } from "./lifecycle.js";
 import {
