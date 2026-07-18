@@ -125,6 +125,10 @@ function normalizedRelativePath(value: string): string {
   return value.split(sep).join("/");
 }
 
+function comparePortableText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function isClawBootstrapFileName(value: string): value is ClawBootstrapFileName {
   return (CLAW_BOOTSTRAP_FILE_NAMES as readonly string[]).includes(value);
 }
@@ -165,10 +169,12 @@ function readPortableAvatar(params: {
 
 function derivativePackageVersion(manifest: ClawManifest, contents: ExportContent[]): string {
   const hash = createHash("sha256").update(JSON.stringify(manifest));
-  for (const file of contents.toSorted((left, right) => left.path.localeCompare(right.path))) {
+  for (const file of contents.toSorted((left, right) =>
+    comparePortableText(left.path, right.path),
+  )) {
     hash.update(file.path).update("\0").update(file.content).update("\0");
   }
-  return `0.0.0-export.${hash.digest("hex").slice(0, 12)}`;
+  return `0.0.0-export.${hash.digest("hex")}`;
 }
 
 type ExportContent = { path: string; content: Buffer };
@@ -243,11 +249,12 @@ export async function exportClawAgent(
         source: pkg.source,
         ref: pkg.ref,
         version: pkg.version,
-        integrity: pkg.integrity,
       }))
-      .toSorted((left, right) =>
-        `${left.kind}:${left.ref}`.localeCompare(`${right.kind}:${right.ref}`),
-      ),
+      .toSorted((left, right) => {
+        const leftIdentity = `${left.kind}:${left.ref}:${left.version}`;
+        const rightIdentity = `${right.kind}:${right.ref}:${right.version}`;
+        return comparePortableText(leftIdentity, rightIdentity);
+      }),
     mcpServers: {},
     cronJobs: [],
   };

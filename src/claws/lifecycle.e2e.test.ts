@@ -303,7 +303,7 @@ describe("claws lifecycle cli e2e", () => {
     expect(JSON.parse(await readFile(join(outputDirectory, "package.json"), "utf8"))).toMatchObject(
       {
         name: "openclaw-claw-workspace-agent",
-        version: expect.stringMatching(/^0\.0\.0-export\.[0-9a-f]{12}$/),
+        version: expect.stringMatching(/^0\.0\.0-export\.[0-9a-f]{64}$/),
         type: "module",
       },
     );
@@ -340,7 +340,7 @@ describe("claws lifecycle cli e2e", () => {
       workspaceFiles: [
         expect.objectContaining({ path: "SOUL.md" }),
         expect.objectContaining({ path: "HEARTBEAT.md" }),
-        expect.objectContaining({ path: join("reference", "policy.md") }),
+        expect.objectContaining({ path: "reference/policy.md" }),
       ],
     });
   });
