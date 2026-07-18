@@ -31,6 +31,7 @@ import {
 import { collectDisabledCodexPluginRouteIssues } from "../commands/doctor/shared/codex-route-warnings.js";
 import type { ConfigValidationIssue, OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveSecretInputRef, type SecretRef } from "../config/types.secrets.js";
+import type { CronListPageResult } from "../cron/service/list-page-types.js";
 import type { CronJob } from "../cron/types.js";
 import { hasAmbiguousGatewayAuthModeConfig } from "../gateway/auth-mode-policy.js";
 import { resolveGatewayAuthToken } from "../gateway/auth-token-resolution.js";
@@ -165,17 +166,61 @@ async function listGatewayCronJobsWithRuntime(
     );
   }
   const { callGateway } = await import("../gateway/call.js");
-  const result = await callGateway<{ jobs?: CronJob[] }>({
-    method: "cron.list",
-    params: { includeDisabled: true },
-    timeoutMs: 3000,
-    config: ctx.cfg,
-    deviceIdentity: null,
-  });
-  if (!Array.isArray(result.jobs)) {
-    throw new Error("Gateway returned an invalid cron inventory response.");
+  const jobs: CronJob[] = [];
+  let offset = 0;
+  let snapshotRevision: string | undefined;
+  let total: number | undefined;
+
+  while (total === undefined || offset < total) {
+    const page = await callGateway<CronListPageResult>({
+      method: "cron.list",
+      params: { includeDisabled: true, limit: 200, offset },
+      timeoutMs: 3000,
+      config: ctx.cfg,
+      deviceIdentity: null,
+    });
+    const validPage =
+      Array.isArray(page.jobs) &&
+      typeof page.snapshotRevision === "string" &&
+      page.snapshotRevision.length > 0 &&
+      Number.isSafeInteger(page.total) &&
+      page.total >= 0 &&
+      page.offset === offset &&
+      Number.isSafeInteger(page.limit) &&
+      page.limit > 0 &&
+      typeof page.hasMore === "boolean" &&
+      (page.nextOffset === null || Number.isSafeInteger(page.nextOffset));
+    if (!validPage) {
+      throw new Error("Gateway returned an invalid cron inventory response.");
+    }
+    if (
+      (snapshotRevision !== undefined && page.snapshotRevision !== snapshotRevision) ||
+      (total !== undefined && page.total !== total)
+    ) {
+      throw new Error("Gateway cron inventory changed while doctor was reading it.");
+    }
+    snapshotRevision ??= page.snapshotRevision;
+    total ??= page.total;
+    jobs.push(...page.jobs);
+
+    if (!page.hasMore) {
+      if (page.nextOffset !== null || jobs.length !== total) {
+        throw new Error("Gateway returned an inconsistent cron inventory response.");
+      }
+      return jobs;
+    }
+    const expectedNextOffset = offset + page.jobs.length;
+    if (
+      page.nextOffset !== expectedNextOffset ||
+      expectedNextOffset <= offset ||
+      expectedNextOffset >= total
+    ) {
+      throw new Error("Gateway returned an invalid cron inventory cursor.");
+    }
+    offset = expectedNextOffset;
   }
-  return result.jobs;
+
+  throw new Error("Gateway returned an incomplete cron inventory response.");
 }
 
 const defaultCoreHealthCheckDeps: CoreHealthCheckDeps = {
