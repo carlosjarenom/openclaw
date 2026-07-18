@@ -100,7 +100,7 @@ export async function applyClawCronUpdate(
   };
   const rollback = async () => {
     const failures: string[] = [];
-    for (const revert of [...undo].reverse()) {
+    for (const revert of undo.toReversed()) {
       try {
         await revert();
       } catch (error) {

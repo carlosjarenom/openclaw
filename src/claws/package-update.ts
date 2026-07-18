@@ -139,6 +139,7 @@ export async function applyClawPackageUpdate(
         source: target.source,
         ref: target.ref,
         version: target.version,
+        integrity: target.integrity,
         status: "pending",
         ownership: "claw-installed",
         installedAtMs: nowMs,

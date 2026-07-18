@@ -14,6 +14,7 @@ function ref(kind: "skill" | "plugin", name: string, version: string): Persisted
     source: "clawhub",
     ref: name,
     version,
+    integrity: `sha256:${name}-${version}`,
     status: "complete",
     ownership: "claw-installed",
     installedAtMs: 10,
@@ -41,8 +42,11 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
       unchanged: 0,
       manual: 0,
       blocked: 0,
+      capabilityChanges: 0,
+      capabilityEscalations: 0,
     },
     actions,
+    capabilityChanges: [],
     blockers: [],
     diagnostics: [],
   };
@@ -53,8 +57,20 @@ const manifest: ClawManifest = {
   agent: { id: "worker" },
   workspace: { bootstrapFiles: {}, files: [] },
   packages: [
-    { kind: "skill", source: "clawhub", ref: "triage", version: "2.0.0" },
-    { kind: "plugin", source: "clawhub", ref: "audit", version: "1.0.0" },
+    {
+      kind: "skill",
+      source: "clawhub",
+      ref: "triage",
+      version: "2.0.0",
+      integrity: "sha256:triage-2.0.0",
+    },
+    {
+      kind: "plugin",
+      source: "clawhub",
+      ref: "audit",
+      version: "1.0.0",
+      integrity: "sha256:audit-1.0.0",
+    },
   ],
   mcpServers: {},
   cronJobs: [],
@@ -102,7 +118,7 @@ const addPlan: ClawAddPlan = {
   })),
   blockers: [],
   diagnostics: [],
-  readiness: [],
+  readiness: { ready: true, requirements: [] },
 };
 
 describe("applyClawPackageUpdate", () => {
@@ -115,8 +131,9 @@ describe("applyClawPackageUpdate", () => {
           kind: "skill" | "plugin";
           ref: string;
           version: string;
+          integrity: string;
         };
-        options.onExternalMutation?.({ ...details, source: "clawhub" });
+        options?.onExternalMutation?.({ ...details, source: "clawhub" });
         return [ref(details.kind, details.ref, details.version)];
       },
     );
@@ -236,7 +253,8 @@ describe("applyClawPackageUpdate", () => {
     }));
     const installPackages = vi.fn(
       async (_plan: ClawAddPlan, options: Parameters<typeof installClawPackages>[1]) => {
-        const preflight = await options.deps?.preflightPlugin?.({
+        expect(options).toBeDefined();
+        const preflight = await options!.deps?.preflightPlugin?.({
           clawhubPackage: "audit",
           rawSpec: "clawhub:audit@1.0.0",
           expectedVersion: "1.0.0",
@@ -282,7 +300,8 @@ describe("applyClawPackageUpdate", () => {
     }));
     const installPackages = vi.fn(
       async (_plan: ClawAddPlan, options: Parameters<typeof installClawPackages>[1]) => {
-        const preflight = await options.deps?.preflightPlugin?.({
+        expect(options).toBeDefined();
+        const preflight = await options!.deps?.preflightPlugin?.({
           clawhubPackage: "audit",
           rawSpec: "clawhub:audit@1.0.0",
           expectedVersion: "1.0.0",

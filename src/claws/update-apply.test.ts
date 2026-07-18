@@ -62,7 +62,7 @@ const addPlan: ClawAddPlan = {
   actions: [],
   blockers: [],
   diagnostics: [],
-  readiness: [],
+  readiness: { ready: true, requirements: [] },
 };
 
 function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
@@ -85,8 +85,11 @@ function plan(actions: ClawUpdatePlan["actions"]): ClawUpdatePlan {
       unchanged: actions.filter((action) => action.action === "unchanged").length,
       manual: 0,
       blocked: actions.filter((action) => action.blocked).length,
+      capabilityChanges: 0,
+      capabilityEscalations: 0,
     },
     actions,
+    capabilityChanges: [],
     blockers: [],
     diagnostics: [],
   };

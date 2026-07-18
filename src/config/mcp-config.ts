@@ -252,10 +252,12 @@ export async function setConfiguredMcpServer(params: {
       error: `MCP server ${JSON.stringify(name)} already exists.`,
     };
   }
+  const existingServer = loaded.mcpServers[name];
   if (
     params.expectedServer &&
     (!Object.hasOwn(loaded.mcpServers, name) ||
-      stableStringify(canonicalizeConfiguredMcpServer(loaded.mcpServers[name])) !==
+      !existingServer ||
+      stableStringify(canonicalizeConfiguredMcpServer(existingServer)) !==
         stableStringify(canonicalizeConfiguredMcpServer(params.expectedServer)))
   ) {
     return {

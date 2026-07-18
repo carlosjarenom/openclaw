@@ -334,7 +334,7 @@ export function readClawInstallRecords(
   return rows.map(rowToInstall);
 }
 
-const CLAW_PACKAGE_REF_SCHEMA_VERSION = "openclaw.clawPackageRef.v1" as const;
+export const CLAW_PACKAGE_REF_SCHEMA_VERSION = "openclaw.clawPackageRef.v1" as const;
 type ClawPackageRefStatus = "pending" | "complete" | "failed" | "rolled_back";
 type ClawPackageRelationship = "managed" | "referenced";
 type ClawPackageOrigin = "claw-introduced" | "pre-existing";
@@ -388,11 +388,11 @@ export function updateClawInstallRecord(
   }
   const updatedAtMs = options.nowMs ?? Date.now();
   const agentConfigDigest = digestAgentConfig(plan);
-  const agentOwnedPaths = plan.actions
+  const ownedAgentPaths = plan.actions
     .filter((action) => action.kind === "agent")
     .map((action) => action.target);
   runOpenClawStateWriteTransaction(({ db }) => {
-    const result = db
+    const result = db /* sqlite-allow-raw: Claw install provenance compare-and-swap write. */
       .prepare(
         `UPDATE claw_installs
             SET source_kind = @source_kind,
@@ -428,7 +428,7 @@ export function updateClawInstallRecord(
         plan_integrity: plan.planIntegrity,
         workspace: plan.agent.workspace,
         agent_config_digest: agentConfigDigest,
-        agent_owned_paths_json: JSON.stringify(agentOwnedPaths),
+        agent_owned_paths_json: JSON.stringify(ownedAgentPaths),
         updated_at_ms: updatedAtMs,
         expected_claw_version: options.expectedClaw?.version ?? current.claw.version,
         expected_integrity: options.expectedClaw?.integrity ?? current.claw.integrity,
@@ -447,7 +447,7 @@ export function updateClawInstallRecord(
     agentId: plan.agent.finalId,
     workspace: plan.agent.workspace,
     agentConfigDigest,
-    agentOwnedPaths,
+    agentOwnedPaths: ownedAgentPaths,
     status: "complete",
     addedAtMs: current.addedAtMs,
     updatedAtMs,
@@ -571,8 +571,9 @@ export function persistClawPackageRef(
       return;
     }
     // sqlite-allow-raw: this Claw prototype state-table write is scoped to one owned row.
-    db.prepare(
-      `INSERT INTO claw_package_refs (
+    db /* sqlite-allow-raw: Claw package provenance upsert. */
+      .prepare(
+        `INSERT INTO claw_package_refs (
          agent_id, package_kind, package_source, package_ref, package_version,
          package_integrity, schema_version, claw_name, package_status, relationship, origin,
          independent_owner,
@@ -688,28 +689,6 @@ export function readClawPackageRefs(
   return rows.map(rowToPackageRef);
 }
 
-export function deleteClawPackageRef(
-  ref: Pick<PersistedClawPackageRef, "agentId" | "kind" | "source" | "ref" | "version">,
-  options: OpenClawStateDatabaseOptions = {},
-): void {
-  runOpenClawStateWriteTransaction(({ db }) => {
-    db.prepare(
-      `DELETE FROM claw_package_refs
-        WHERE agent_id = @agent_id
-          AND package_kind = @package_kind
-          AND package_source = @package_source
-          AND package_ref = @package_ref
-          AND package_version = @package_version`,
-    ).run({
-      agent_id: ref.agentId,
-      package_kind: ref.kind,
-      package_source: ref.source,
-      package_ref: ref.ref,
-      package_version: ref.version,
-    });
-  }, options);
-}
-
 export function replaceClawPackageRefExpected(
   expected: PersistedClawPackageRef | undefined,
   replacement: PersistedClawPackageRef | undefined,
@@ -721,7 +700,7 @@ export function replaceClawPackageRefExpected(
   }
   runOpenClawStateWriteTransaction(({ db }) => {
     if (expected) {
-      const result = db
+      const result = db /* sqlite-allow-raw: Claw package provenance compare-and-swap delete. */
         .prepare(
           `DELETE FROM claw_package_refs
             WHERE agent_id = @agent_id
@@ -729,6 +708,7 @@ export function replaceClawPackageRefExpected(
               AND package_source = @package_source
               AND package_ref = @package_ref
               AND package_version = @package_version
+              AND package_integrity = @package_integrity
               AND schema_version = @schema_version
               AND claw_name = @claw_name
               AND package_status = @package_status
@@ -742,6 +722,7 @@ export function replaceClawPackageRefExpected(
           package_source: expected.source,
           package_ref: expected.ref,
           package_version: expected.version,
+          package_integrity: expected.integrity,
           schema_version: expected.schemaVersion,
           claw_name: expected.clawName,
           package_status: expected.status,
@@ -755,12 +736,13 @@ export function replaceClawPackageRefExpected(
         );
       }
     } else {
-      const occupied = db
-        .prepare(
-          `SELECT 1 FROM claw_package_refs
+      const occupied =
+        db /* sqlite-allow-raw: Claw package provenance compare-and-swap occupancy check. */
+          .prepare(
+            `SELECT 1 FROM claw_package_refs
             WHERE agent_id = ? AND package_kind = ? AND package_source = ? AND package_ref = ?`,
-        )
-        .get(identity.agentId, identity.kind, identity.source, identity.ref);
+          )
+          .get(identity.agentId, identity.kind, identity.source, identity.ref);
       if (occupied) {
         throw new Error(
           `Package reference ${JSON.stringify(`${identity.kind}:${identity.ref}`)} appeared after planning.`,
@@ -768,68 +750,32 @@ export function replaceClawPackageRefExpected(
       }
     }
     if (replacement) {
-      db.prepare(
-        `INSERT INTO claw_package_refs (
-           agent_id, package_kind, package_source, package_ref, package_version,
+      db /* sqlite-allow-raw: Claw package provenance compare-and-swap insert. */
+        .prepare(
+          `INSERT INTO claw_package_refs (
+           agent_id, package_kind, package_source, package_ref, package_version, package_integrity,
            schema_version, claw_name, package_status, ownership, installed_at_ms,
            updated_at_ms
          ) VALUES (
-           @agent_id, @package_kind, @package_source, @package_ref, @package_version,
+           @agent_id, @package_kind, @package_source, @package_ref, @package_version, @package_integrity,
            @schema_version, @claw_name, @package_status, @ownership, @installed_at_ms,
            @updated_at_ms
          )`,
-      ).run({
-        agent_id: replacement.agentId,
-        package_kind: replacement.kind,
-        package_source: replacement.source,
-        package_ref: replacement.ref,
-        package_version: replacement.version,
-        schema_version: replacement.schemaVersion,
-        claw_name: replacement.clawName,
-        package_status: replacement.status,
-        ownership: replacement.ownership,
-        installed_at_ms: replacement.installedAtMs,
-        updated_at_ms: replacement.updatedAtMs,
-      });
+        )
+        .run({
+          agent_id: replacement.agentId,
+          package_kind: replacement.kind,
+          package_source: replacement.source,
+          package_ref: replacement.ref,
+          package_version: replacement.version,
+          package_integrity: replacement.integrity,
+          schema_version: replacement.schemaVersion,
+          claw_name: replacement.clawName,
+          package_status: replacement.status,
+          ownership: replacement.ownership,
+          installed_at_ms: replacement.installedAtMs,
+          updated_at_ms: replacement.updatedAtMs,
+        });
     }
-  }, options);
-}
-
-export function upsertClawPackageRef(
-  ref: PersistedClawPackageRef,
-  options: OpenClawStateDatabaseOptions = {},
-): void {
-  runOpenClawStateWriteTransaction(({ db }) => {
-    db.prepare(
-      `INSERT INTO claw_package_refs (
-         agent_id, package_kind, package_source, package_ref, package_version,
-         schema_version, claw_name, package_status, ownership, installed_at_ms,
-         updated_at_ms
-       ) VALUES (
-         @agent_id, @package_kind, @package_source, @package_ref, @package_version,
-         @schema_version, @claw_name, @package_status, @ownership, @installed_at_ms,
-         @updated_at_ms
-       )
-       ON CONFLICT(agent_id, package_kind, package_source, package_ref, package_version)
-       DO UPDATE SET
-         schema_version = excluded.schema_version,
-         claw_name = excluded.claw_name,
-         package_status = excluded.package_status,
-         ownership = excluded.ownership,
-         installed_at_ms = excluded.installed_at_ms,
-         updated_at_ms = excluded.updated_at_ms`,
-    ).run({
-      agent_id: ref.agentId,
-      package_kind: ref.kind,
-      package_source: ref.source,
-      package_ref: ref.ref,
-      package_version: ref.version,
-      schema_version: ref.schemaVersion,
-      claw_name: ref.clawName,
-      package_status: ref.status,
-      ownership: ref.ownership,
-      installed_at_ms: ref.installedAtMs,
-      updated_at_ms: ref.updatedAtMs,
-    });
   }, options);
 }

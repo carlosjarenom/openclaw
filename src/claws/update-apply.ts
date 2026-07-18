@@ -47,7 +47,7 @@ export class ClawUpdateMutationError extends Error {
   }
 }
 
-export type ClawUpdateResult = {
+type ClawUpdateResult = {
   schemaVersion: typeof CLAW_UPDATE_RESULT_SCHEMA_VERSION;
   stability: typeof CLAW_OUTPUT_STABILITY;
   dryRun: false;

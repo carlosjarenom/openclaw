@@ -5,7 +5,7 @@ import {
 } from "../state/openclaw-state-db.js";
 import type { ClawAddPlan, ClawCronJob } from "./types.js";
 
-const CLAW_CRON_REF_SCHEMA_VERSION = "openclaw.clawCronRef.v1" as const;
+export const CLAW_CRON_REF_SCHEMA_VERSION = "openclaw.clawCronRef.v1" as const;
 
 export type PersistedClawCronRef = {
   schemaVersion: typeof CLAW_CRON_REF_SCHEMA_VERSION;
@@ -360,8 +360,9 @@ export function upsertClawCronRef(
   options: OpenClawStateDatabaseOptions = {},
 ): void {
   runOpenClawStateWriteTransaction(({ db }) => {
-    db.prepare(
-      `INSERT INTO claw_cron_refs (
+    db /* sqlite-allow-raw: Claw cron lifecycle provenance write. */
+      .prepare(
+        `INSERT INTO claw_cron_refs (
          agent_id, manifest_id, schema_version, declaration_key, scheduler_job_id,
          status, job_json, error, created_at_ms, updated_at_ms
        ) VALUES (
@@ -376,17 +377,18 @@ export function upsertClawCronRef(
          job_json = excluded.job_json,
          error = excluded.error,
          updated_at_ms = excluded.updated_at_ms`,
-    ).run({
-      agent_id: ref.agentId,
-      manifest_id: ref.manifestId,
-      schema_version: ref.schemaVersion,
-      declaration_key: ref.declarationKey,
-      scheduler_job_id: ref.schedulerJobId ?? null,
-      status: ref.status,
-      job_json: JSON.stringify(ref.job),
-      error: ref.error ?? null,
-      created_at_ms: ref.createdAtMs,
-      updated_at_ms: ref.updatedAtMs,
-    });
+      )
+      .run({
+        agent_id: ref.agentId,
+        manifest_id: ref.manifestId,
+        schema_version: ref.schemaVersion,
+        declaration_key: ref.declarationKey,
+        scheduler_job_id: ref.schedulerJobId ?? null,
+        status: ref.status,
+        job_json: JSON.stringify(ref.job),
+        error: ref.error ?? null,
+        created_at_ms: ref.createdAtMs,
+        updated_at_ms: ref.updatedAtMs,
+      });
   }, options);
 }

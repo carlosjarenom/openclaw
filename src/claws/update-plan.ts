@@ -35,7 +35,11 @@ import {
   type ClawUpdatePlan,
 } from "./update-plan-types.js";
 
-export { CLAW_UPDATE_PLAN_SCHEMA_VERSION, type ClawUpdatePlan } from "./update-plan-types.js";
+export {
+  CLAW_UPDATE_PLAN_SCHEMA_VERSION,
+  type ClawUpdateAction,
+  type ClawUpdatePlan,
+} from "./update-plan-types.js";
 
 function digest(value: unknown): string {
   return `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;

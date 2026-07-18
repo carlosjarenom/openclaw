@@ -17,7 +17,6 @@ import {
   readClawInstallRecord,
   readClawPackageRefs,
   replaceClawPackageRefExpected,
-  upsertClawPackageRef,
   updateClawInstallRecord,
   updateClawInstallRecordStatus,
   updateClawPackageRefStatus,
@@ -265,6 +264,7 @@ describe("Claw root install provenance", () => {
       source: "clawhub" as const,
       ref: "@acme/audit",
       version: "2.3.4",
+      integrity: "sha256:audit-2.3.4",
     };
 
     const record = persistClawPackageRef(plan, pkg, { env: stateEnv(root), nowMs: 43 });
@@ -294,6 +294,7 @@ describe("Claw root install provenance", () => {
       source: "clawhub" as const,
       ref: "@acme/audit",
       version: "2.3.4",
+      integrity: "sha256:audit-2.3.4",
     };
     const planned = persistClawPackageRef(plan, pkg, { ...options, nowMs: 43 });
     const current = updateClawPackageRefStatus(planned, "pending", options);
@@ -315,6 +316,7 @@ describe("Claw root install provenance", () => {
         source: "clawhub",
         ref: "@acme/audit",
         version: "2.3.4",
+        integrity: "sha256:audit-2.3.4",
       },
       { ...options, nowMs: 43 },
     );
@@ -328,8 +330,17 @@ describe("Claw root install provenance", () => {
     replaceClawPackageRefExpected(planned, replacement, options);
     expect(readClawPackageRefs(options)).toEqual([replacement]);
 
-    const restored = { ...planned, updatedAtMs: 45 };
-    upsertClawPackageRef(restored, options);
+    const restored = persistClawPackageRef(
+      plan,
+      {
+        kind: "plugin",
+        source: "clawhub",
+        ref: "@acme/audit",
+        version: "2.3.4",
+        integrity: "sha256:audit-2.3.4",
+      },
+      { ...options, nowMs: 45 },
+    );
     expect(readClawPackageRefs(options)).toEqual(expect.arrayContaining([replacement, restored]));
   });
 });
