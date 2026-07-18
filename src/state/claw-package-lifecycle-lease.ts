@@ -15,11 +15,11 @@ import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
 
 type ClawPackageLifecycleDatabase = Pick<OpenClawStateKyselyDatabase, "state_leases">;
 
-export type ClawPackageLifecycleArtifact =
+type ClawPackageLifecycleArtifact =
   | { kind: "plugin"; source: "clawhub"; ref: string }
   | { kind: "skill"; source: "clawhub"; ref: string; workspace: string };
 
-export type ClawPackageLifecycleLease = {
+type ClawPackageLifecycleLease = {
   heartbeat: (nowMs?: number) => void;
   release: () => void;
 };
@@ -38,7 +38,7 @@ type ClawPackageLifecycleLeaseOptions = OpenClawStateDatabaseOptions & {
 const LEASE_SCOPE = "claw-package-lifecycle";
 const LEASE_TTL_MS = 5 * 60_000;
 
-export class ClawPackageLifecycleBusyError extends Error {
+class ClawPackageLifecycleBusyError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ClawPackageLifecycleBusyError";
@@ -181,7 +181,7 @@ export function maintainClawPackageLifecycleLease(
   return {
     assertCurrent: () => {
       if (heartbeatError) {
-        throw heartbeatError;
+        throw heartbeatError instanceof Error ? heartbeatError : new Error(String(heartbeatError));
       }
       lease.heartbeat();
     },

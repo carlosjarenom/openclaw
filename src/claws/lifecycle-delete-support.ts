@@ -125,7 +125,7 @@ export function deletionEffects(config: OpenClawConfig, agentId: string, fallbac
   };
 }
 
-export type AttachedCronJob = {
+type AttachedCronJob = {
   id: string;
   name: string;
   enabled: boolean;
@@ -142,7 +142,7 @@ export function readAttachedCronJobs(
   if (!clawStateTableExists(database.db, "cron_jobs")) {
     return [];
   }
-  return database.db
+  return database.db /* sqlite-allow-raw: read-only cron references for Claw removal planning. */
     .prepare(
       `SELECT job_id AS id, name, enabled, agent_id AS agentId, owner_agent_id AS ownerAgentId
          FROM cron_jobs
