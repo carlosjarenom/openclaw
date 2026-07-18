@@ -317,7 +317,7 @@ export function clawMcpRemovalSelector(ref: PersistedClawMcpServerRef): string {
   return `mcp:${ref.name}`;
 }
 
-export type ClawMcpServerRemovalDecision = {
+type ClawMcpServerRemovalDecision = {
   ref: PersistedClawMcpServerRef;
   action: "remove" | "release";
   blocked: boolean;
