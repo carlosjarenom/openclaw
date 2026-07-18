@@ -1,17 +1,20 @@
 import { createHash } from "node:crypto";
 import { closeSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, realpath, rm } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
+import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { openLocalAgentAvatarFile } from "../agents/identity-avatar-file.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readFileDescriptorBoundedSync } from "../infra/file-descriptor-read.js";
 import { root as fsSafeRoot } from "../infra/fs-safe.js";
-import { isRenderableAvatarImageDataUrl } from "../shared/avatar-limits.js";
 import { AVATAR_MAX_BYTES, isAvatarDataUrl, isAvatarHttpUrl } from "../shared/avatar-policy.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import { resolveUserPath } from "../utils.js";
 import { readClawStatus } from "./lifecycle-state.js";
+import type { PackageRemovalDeps } from "./package-remove.js";
+import { isPortableClawAvatar } from "./schema-portability.js";
 import { parseClawManifest } from "./schema.js";
+import { MAX_MANAGED_WORKSPACE_BYTES } from "./source-limits.js";
 import {
   CLAW_BOOTSTRAP_FILE_NAMES,
   CLAW_OUTPUT_STABILITY,
@@ -147,7 +150,7 @@ function readPortableAvatar(params: {
     return {};
   }
   if (isAvatarDataUrl(source)) {
-    return isRenderableAvatarImageDataUrl(source) ? { source } : {};
+    return isPortableClawAvatar(source) ? { source } : {};
   }
   const opened = openLocalAgentAvatarFile({
     cfg: params.config,
@@ -183,7 +186,10 @@ type ExportContent = { path: string; content: Buffer };
 export async function exportClawAgent(
   agentId: string,
   outputDirectory: string,
-  options: OpenClawStateDatabaseOptions & { config: OpenClawConfig },
+  options: OpenClawStateDatabaseOptions & {
+    config: OpenClawConfig;
+    packageDeps?: PackageRemovalDeps;
+  },
 ): Promise<ClawExportResult> {
   const status = await readClawStatus(agentId, options);
   const record = status.records.find((candidate) => candidate.install.agentId === agentId);
@@ -206,13 +212,33 @@ export async function exportClawAgent(
       `Installed Claw agent ${JSON.stringify(agentId)} is missing from config.`,
     );
   }
-  const unavailable = record.workspaceFiles.filter(
-    (file) => file.state === "missing" || file.state === "unsafe",
-  );
-  if (unavailable.length > 0) {
+  const currentWorkspace = await realpath(
+    resolve(resolveAgentWorkspaceDir(options.config, agentId)),
+  ).catch(() => resolve(resolveAgentWorkspaceDir(options.config, agentId)));
+  if (currentWorkspace !== record.install.workspace) {
     throw new ClawExportError(
-      "workspace_files_unavailable",
-      `Cannot export unavailable managed files: ${unavailable.map((file) => file.path).join(", ")}.`,
+      "workspace_changed",
+      `Agent ${JSON.stringify(agentId)} now resolves to workspace ${JSON.stringify(currentWorkspace)} instead of its recorded Claw workspace ${JSON.stringify(record.install.workspace)}.`,
+    );
+  }
+  if (record.agentState !== "present") {
+    throw new ClawExportError(
+      "agent_drifted",
+      `Agent ${JSON.stringify(agentId)} no longer matches its recorded Claw configuration.`,
+    );
+  }
+  const driftedFiles = record.workspaceFiles.filter((file) => file.state !== "unchanged");
+  if (driftedFiles.length > 0) {
+    throw new ClawExportError(
+      "workspace_files_drifted",
+      `Cannot export drifted managed files: ${driftedFiles.map((file) => `${file.path} (${file.state})`).join(", ")}.`,
+    );
+  }
+  const driftedPackages = record.packages.filter((pkg) => pkg.state !== "present");
+  if (driftedPackages.length > 0) {
+    throw new ClawExportError(
+      "packages_drifted",
+      `Cannot export drifted packages: ${driftedPackages.map((pkg) => `${pkg.kind}:${pkg.ref}@${pkg.version} (${pkg.state})`).join(", ")}.`,
     );
   }
 
@@ -235,6 +261,13 @@ export async function exportClawAgent(
   const managedPaths = new Set(contents.map((file) => file.path));
   if (avatar.sidecar && !managedPaths.has(avatar.sidecar.path)) {
     contents.push(avatar.sidecar);
+  }
+  const aggregateBytes = contents.reduce((total, file) => total + file.content.byteLength, 0);
+  if (aggregateBytes > MAX_MANAGED_WORKSPACE_BYTES) {
+    throw new ClawExportError(
+      "workspace_files_oversized",
+      `Exported workspace content exceeds ${MAX_MANAGED_WORKSPACE_BYTES} aggregate bytes.`,
+    );
   }
   const bootstrapFiles: ClawManifest["workspace"]["bootstrapFiles"] = {};
   const files: ClawManifest["workspace"]["files"] = [];

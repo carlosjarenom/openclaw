@@ -16,17 +16,37 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-async function installedFixture() {
+async function installedFixture(
+  options: {
+    avatar?: string;
+    extraWorkspaceFiles?: string[];
+    withPackage?: boolean;
+    workspaceFileBytes?: number;
+  } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "openclaw-claw-export-"));
   await mkdir(join(root, "source", "reference"), { recursive: true });
-  await writeFile(join(root, "source", "SOUL.md"), "managed soul\n", "utf8");
-  await writeFile(join(root, "source", "reference", "policy.md"), "managed policy\n", "utf8");
+  const content = (label: string) =>
+    options.workspaceFileBytes ? Buffer.alloc(options.workspaceFileBytes) : `managed ${label}\n`;
+  await writeFile(join(root, "source", "SOUL.md"), content("soul"));
+  await writeFile(join(root, "source", "reference", "policy.md"), content("policy"));
+  for (const path of options.extraWorkspaceFiles ?? []) {
+    await writeFile(join(root, "source", path), content(path));
+  }
   const parsed = parseClawManifest({
     schemaVersion: 1,
-    agent: { id: "worker", name: "Worker", tools: { deny: ["exec"] } },
+    agent: {
+      id: "worker",
+      name: "Worker",
+      ...(options.avatar ? { identity: { avatar: options.avatar } } : {}),
+      tools: { deny: ["exec"] },
+    },
     workspace: {
       bootstrapFiles: { "SOUL.md": { source: "source/SOUL.md" } },
-      files: [{ source: "source/reference/policy.md", path: "reference/policy.md" }],
+      files: [
+        { source: "source/reference/policy.md", path: "reference/policy.md" },
+        ...(options.extraWorkspaceFiles ?? []).map((path) => ({ source: `source/${path}`, path })),
+      ],
     },
   });
   if (!parsed.ok) {
@@ -55,28 +75,51 @@ async function installedFixture() {
       config = transform(config);
     },
   });
-  persistClawPackageRef(
+  if (options.withPackage) {
+    persistClawPackageRef(
+      plan,
+      {
+        kind: "skill",
+        source: "clawhub",
+        ref: "@acme/triage",
+        version: "2.0.0",
+        integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      },
+      { env: { OPENCLAW_STATE_DIR: join(root, "state") } },
+    );
+  }
+  return {
+    root,
     plan,
-    {
-      kind: "skill",
-      source: "clawhub",
-      ref: "@acme/triage",
-      version: "2.0.0",
-      integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    config,
+    env: { OPENCLAW_STATE_DIR: join(root, "state") },
+    packageDeps: {
+      planSkill: async () => ({
+        ok: true as const,
+        plan: {
+          workspaceDir: plan.agent.workspace,
+          slug: "@acme/triage",
+          version: "2.0.0",
+          installedAt: 0,
+          targetDir: join(plan.agent.workspace, "skills", "@acme", "triage"),
+          skillFilePath: join(plan.agent.workspace, "skills", "@acme", "triage", "SKILL.md"),
+          skillFileSha256: "a".repeat(64),
+          fileTreeSha256: `sha256:${"a".repeat(64)}`,
+        },
+      }),
     },
-    { env: { OPENCLAW_STATE_DIR: join(root, "state") } },
-  );
-  return { root, plan, config, env: { OPENCLAW_STATE_DIR: join(root, "state") } };
+  };
 }
 
 describe("exportClawAgent", () => {
   it("writes a grouped package from one installed agent", async () => {
-    const fixture = await installedFixture();
+    const fixture = await installedFixture({ withPackage: true });
     const out = join(fixture.root, "exported");
 
     const result = await exportClawAgent("worker", out, {
       env: fixture.env,
       config: fixture.config,
+      packageDeps: fixture.packageDeps,
     });
 
     expect(result).toMatchObject({
@@ -113,22 +156,18 @@ describe("exportClawAgent", () => {
     );
   });
 
-  it("exports current content when a managed file was intentionally edited", async () => {
+  it("rejects modified managed content instead of silently creating a snapshot", async () => {
     const fixture = await installedFixture();
     await writeFile(join(fixture.plan.agent.workspace, "SOUL.md"), "operator revision\n", "utf8");
     const out = join(fixture.root, "exported-edited");
 
-    await exportClawAgent("worker", out, { env: fixture.env, config: fixture.config });
-
-    await expect(readFile(join(out, "workspace", "SOUL.md"), "utf8")).resolves.toBe(
-      "operator revision\n",
-    );
-    await expect(readFile(join(out, "package.json"), "utf8")).resolves.toSatisfy((raw) => {
-      const pkg = JSON.parse(raw);
-      return (
-        pkg.name === "openclaw-claw-worker" && /^0\.0\.0-export\.[0-9a-f]{64}$/.test(pkg.version)
-      );
-    });
+    await expect(
+      exportClawAgent("worker", out, {
+        env: fixture.env,
+        config: fixture.config,
+        packageDeps: fixture.packageDeps,
+      }),
+    ).rejects.toMatchObject({ code: "workspace_files_drifted" });
   });
 
   it("rejects a partial install rather than exporting an incomplete snapshot", async () => {
@@ -139,17 +178,44 @@ describe("exportClawAgent", () => {
       exportClawAgent("worker", join(fixture.root, "exported-partial"), {
         env: fixture.env,
         config: fixture.config,
+        packageDeps: fixture.packageDeps,
       }),
     ).rejects.toMatchObject({ code: "install_incomplete" });
   });
 
-  it("packages a safe workspace-relative avatar as a sidecar", async () => {
+  it("rejects agent configuration drift", async () => {
     const fixture = await installedFixture();
-    const avatarPath = join(fixture.plan.agent.workspace, "avatars", "worker.png");
-    await mkdir(join(fixture.plan.agent.workspace, "avatars"), { recursive: true });
-    await writeFile(avatarPath, "avatar bytes");
     const agent = fixture.config.agents!.list!.find((candidate) => candidate.id === "worker")!;
-    agent.identity = { avatar: "avatars/worker.png" };
+    agent.name = "Locally changed worker";
+
+    await expect(
+      exportClawAgent("worker", join(fixture.root, "exported-agent-drift"), {
+        env: fixture.env,
+        config: fixture.config,
+      }),
+    ).rejects.toMatchObject({ code: "agent_drifted" });
+  });
+
+  it("rejects missing or drifted package dependencies", async () => {
+    const fixture = await installedFixture({ withPackage: true });
+
+    await expect(
+      exportClawAgent("worker", join(fixture.root, "exported-package-drift"), {
+        env: fixture.env,
+        config: fixture.config,
+        packageDeps: {
+          planSkill: async () => ({ ok: false as const, code: "missing", error: "missing" }),
+        },
+      }),
+    ).rejects.toMatchObject({ code: "packages_drifted" });
+  });
+
+  it("packages a safe workspace-relative avatar as a sidecar", async () => {
+    const fixture = await installedFixture({
+      avatar: "avatars/worker.png",
+      extraWorkspaceFiles: ["avatars/worker.png"],
+    });
+    const avatarPath = join(fixture.plan.agent.workspace, "avatars", "worker.png");
     const out = join(fixture.root, "exported-avatar");
 
     const result = await exportClawAgent("worker", out, {
@@ -163,53 +229,42 @@ describe("exportClawAgent", () => {
       path: "avatars/worker.png",
     });
     await expect(readFile(join(out, "workspace", "avatars", "worker.png"), "utf8")).resolves.toBe(
-      "avatar bytes",
+      "managed avatars/worker.png\n",
     );
+    await expect(readFile(avatarPath, "utf8")).resolves.toBe("managed avatars/worker.png\n");
   });
 
-  it("omits a remote avatar from the portable agent", async () => {
-    const fixture = await installedFixture();
-    const agent = fixture.config.agents!.list!.find((candidate) => candidate.id === "worker")!;
-    agent.identity = { avatar: "https://example.com/worker.png" };
-
-    const result = await exportClawAgent("worker", join(fixture.root, "exported-remote-avatar"), {
-      env: fixture.env,
-      config: fixture.config,
+  it("rejects aggregate workspace content that cannot be inspected or reapplied", async () => {
+    const fixture = await installedFixture({
+      avatar: "avatars/worker.png",
+      extraWorkspaceFiles: ["one.md", "two.md"],
+      workspaceFileBytes: 1024 * 1024 - 1024,
     });
+    const avatarDir = join(fixture.plan.agent.workspace, "avatars");
+    await mkdir(avatarDir);
+    await writeFile(join(avatarDir, "worker.png"), Buffer.alloc(8192));
 
-    expect(result.manifest.agent.identity?.avatar).toBeUndefined();
-  });
-
-  it("omits a non-renderable data URL avatar", async () => {
-    const fixture = await installedFixture();
-    const agent = fixture.config.agents!.list!.find((candidate) => candidate.id === "worker")!;
-    agent.identity = { avatar: "data:text/plain;base64,bm90IGFuIGltYWdl" };
-
-    const result = await exportClawAgent(
-      "worker",
-      join(fixture.root, "exported-invalid-data-avatar"),
-      {
+    await expect(
+      exportClawAgent("worker", join(fixture.root, "exported-oversized"), {
         env: fixture.env,
         config: fixture.config,
-      },
-    );
-
-    expect(result.manifest.agent.identity?.avatar).toBeUndefined();
+      }),
+    ).rejects.toMatchObject({ code: "workspace_files_oversized" });
   });
 
-  it("omits valid empty optional arrays", async () => {
+  it("rejects an agent whose effective workspace changed after installation", async () => {
     const fixture = await installedFixture();
+    const movedWorkspace = join(fixture.root, "moved-workspace");
+    await mkdir(movedWorkspace);
     const agent = fixture.config.agents!.list!.find((candidate) => candidate.id === "worker")!;
-    agent.tools = { allow: [], deny: [] };
-    agent.groupChat = { mentionPatterns: [] };
+    agent.workspace = movedWorkspace;
 
-    const result = await exportClawAgent("worker", join(fixture.root, "exported-empty-arrays"), {
-      env: fixture.env,
-      config: fixture.config,
-    });
-
-    expect(result.manifest.agent.tools).toBeUndefined();
-    expect(result.manifest.agent.groupChat).toBeUndefined();
+    await expect(
+      exportClawAgent("worker", join(fixture.root, "exported-moved-workspace"), {
+        env: fixture.env,
+        config: fixture.config,
+      }),
+    ).rejects.toMatchObject({ code: "workspace_changed" });
   });
 
   it("expands a home-relative output directory", async () => {
@@ -237,7 +292,7 @@ describe("exportClawAgent", () => {
         env: fixture.env,
         config: fixture.config,
       }),
-    ).rejects.toMatchObject({ code: "workspace_files_unavailable" });
+    ).rejects.toMatchObject({ code: "workspace_files_drifted" });
   });
 
   it("never writes into an existing output directory", async () => {
