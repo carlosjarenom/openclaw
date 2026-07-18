@@ -81,7 +81,7 @@ function readInstallRow(agentId: string, root: string) {
 }
 
 describe("Claw root install provenance", () => {
-  it("replays an exact package ref without losing Claw-installed ownership", async () => {
+  it("replays an exact package ref without losing its relationship or origin", async () => {
     const { root, plan } = await makePlan();
     const pkg = {
       kind: "plugin" as const,
@@ -95,18 +95,24 @@ describe("Claw root install provenance", () => {
       env: stateEnv(root),
       nowMs: 42,
       status: "pending",
-      ownership: "claw-installed",
+      relationship: "referenced",
+      origin: "claw-introduced",
+      independentOwner: false,
     });
     const replayed = persistClawPackageRef(plan, pkg, {
       env: stateEnv(root),
       nowMs: 84,
       status: "complete",
-      ownership: "independently-owned",
+      relationship: "referenced",
+      origin: "pre-existing",
+      independentOwner: true,
     });
 
     expect(replayed).toMatchObject({
       status: "complete",
-      ownership: "claw-installed",
+      relationship: "referenced",
+      origin: "claw-introduced",
+      independentOwner: true,
       installedAtMs: 42,
       updatedAtMs: 84,
     });

@@ -1921,7 +1921,9 @@ CREATE TABLE IF NOT EXISTS claw_package_refs (
   schema_version TEXT NOT NULL,
   claw_name TEXT NOT NULL,
   package_status TEXT NOT NULL,
-  ownership TEXT NOT NULL,
+  relationship TEXT NOT NULL CHECK (relationship IN ('managed', 'referenced')),
+  origin TEXT NOT NULL CHECK (origin IN ('claw-introduced', 'pre-existing')),
+  independent_owner INTEGER NOT NULL CHECK (independent_owner IN (0, 1)),
   installed_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL,
   PRIMARY KEY (agent_id, package_kind, package_source, package_ref, package_version)

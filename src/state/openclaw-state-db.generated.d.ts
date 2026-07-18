@@ -258,14 +258,16 @@ export interface ClawInstalls {
 export interface ClawPackageRefs {
   agent_id: string;
   claw_name: string;
+  independent_owner: number;
   installed_at_ms: number;
-  ownership: string;
+  origin: string;
   package_integrity: string;
   package_kind: string;
   package_ref: string;
   package_source: string;
   package_status: string;
   package_version: string;
+  relationship: string;
   schema_version: string;
   updated_at_ms: number;
 }

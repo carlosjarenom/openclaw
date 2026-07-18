@@ -107,7 +107,12 @@ describe("installClawPackages", () => {
     expect(persistPackageRef).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ integrity }),
-      expect.objectContaining({ status: "pending", ownership: "claw-installed" }),
+      expect.objectContaining({
+        status: "pending",
+        relationship: "managed",
+        origin: "claw-introduced",
+        independentOwner: false,
+      }),
     );
   });
 
@@ -151,7 +156,12 @@ describe("installClawPackages", () => {
       expect.objectContaining({
         integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
-      expect.objectContaining({ status: "pending", ownership: "claw-installed" }),
+      expect.objectContaining({
+        status: "pending",
+        relationship: "referenced",
+        origin: "claw-introduced",
+        independentOwner: false,
+      }),
     );
   });
 
@@ -187,7 +197,12 @@ describe("installClawPackages", () => {
       expect.objectContaining({
         integrity: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
-      expect.objectContaining({ status: "complete", ownership: "independently-owned" }),
+      expect.objectContaining({
+        status: "complete",
+        relationship: "referenced",
+        origin: "pre-existing",
+        independentOwner: true,
+      }),
     );
   });
 

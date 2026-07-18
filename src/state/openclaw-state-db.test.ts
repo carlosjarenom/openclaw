@@ -1931,8 +1931,8 @@ describe("openclaw state database", () => {
       .prepare(
         "INSERT INTO claw_package_refs (" +
           "agent_id, package_kind, package_source, package_ref, package_version, " +
-          "package_integrity, schema_version, claw_name, package_status, ownership, installed_at_ms, updated_at_ms" +
-          ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "package_integrity, schema_version, claw_name, package_status, relationship, origin, independent_owner, installed_at_ms, updated_at_ms" +
+          ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         "incident",
@@ -1944,7 +1944,9 @@ describe("openclaw state database", () => {
         "openclaw.clawPackageRef.v1",
         "incident-claw",
         "complete",
-        "claw-installed",
+        "referenced",
+        "claw-introduced",
+        0,
         1234,
         5678,
       );

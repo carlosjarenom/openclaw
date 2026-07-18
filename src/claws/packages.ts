@@ -204,7 +204,9 @@ export async function installClawPackages(
             persistPackageRef(plan, pkg, {
               ...options,
               status: "complete",
-              ownership: "independently-owned",
+              relationship: "managed",
+              origin: "pre-existing",
+              independentOwner: true,
             }),
           );
           continue;
@@ -212,7 +214,8 @@ export async function installClawPackages(
         let packageRef = persistPackageRef(plan, pkg, {
           ...options,
           status: "pending",
-          ownership: "claw-installed",
+          relationship: "managed",
+          origin: "claw-introduced",
         });
         installedPackages.push(packageRef);
         const installed = await installSkill({
@@ -273,7 +276,9 @@ export async function installClawPackages(
           persistPackageRef(plan, pkg, {
             ...options,
             status: "complete",
-            ownership: "independently-owned",
+            relationship: "referenced",
+            origin: "pre-existing",
+            independentOwner: true,
           }),
         );
         continue;
@@ -282,7 +287,8 @@ export async function installClawPackages(
       let packageRef = persistPackageRef(plan, pkg, {
         ...options,
         status: "pending",
-        ownership: "claw-installed",
+        relationship: "referenced",
+        origin: "claw-introduced",
       });
       installedPackages.push(packageRef);
 
