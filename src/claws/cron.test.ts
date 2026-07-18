@@ -147,4 +147,29 @@ describe("installClawCronJobs", () => {
       { schedulerJobId: "scheduler-after-lost-response", status: "complete" },
     ]);
   });
+
+  it("converges concurrent installs through the declaration key", async () => {
+    const current = await fixture();
+    const jobs = new Map<string, { id: string; declarationKey: string }>();
+    const add = vi.fn(async (input: Record<string, unknown>) => {
+      await Promise.resolve();
+      const declarationKey = String(input.declarationKey);
+      const existing = jobs.get(declarationKey);
+      if (existing) {
+        return { created: false, job: existing };
+      }
+      const created = { id: "scheduler-converged", declarationKey };
+      jobs.set(declarationKey, created);
+      return { created: true, job: created };
+    });
+
+    const [first, second] = await Promise.all([
+      installClawCronJobs(current.plan, { env: current.env, gateway: { add } }),
+      installClawCronJobs(current.plan, { env: current.env, gateway: { add } }),
+    ]);
+
+    expect(jobs.size).toBe(1);
+    expect(first[0]).toMatchObject({ schedulerJobId: "scheduler-converged", status: "complete" });
+    expect(second[0]).toMatchObject({ schedulerJobId: "scheduler-converged", status: "complete" });
+  });
 });
