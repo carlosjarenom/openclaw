@@ -309,6 +309,7 @@ describe("collectClawStateHealthFindings", () => {
     const current = await installFixture({ withFile: true });
     current.getConfig().agents!.list![0] = {
       ...current.getConfig().agents!.list![0],
+      id: current.plan.agent.finalId,
       name: "Operator edit",
     };
     await writeFile(join(current.plan.agent.workspace, "SOUL.md"), "local edit\n", "utf8");
@@ -382,7 +383,9 @@ describe("collectClawStateHealthFindings", () => {
     });
     expect(findings).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ message: expect.stringContaining("partial install record") }),
+        expect.objectContaining({
+          message: expect.stringContaining("incomplete install record (config_committed)"),
+        }),
         expect.objectContaining({
           message: expect.stringContaining("pending ownership state"),
           path: "claws.worker.cronJobs.daily-report",

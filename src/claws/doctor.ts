@@ -97,10 +97,10 @@ function collectInstallFindings(
 ): HealthFinding[] {
   const agentId = record.install.agentId;
   const findings: HealthFinding[] = [];
-  if (record.install.status === "partial") {
+  if (record.install.status !== "complete") {
     findings.push(
       finding({
-        message: `Claw agent ${JSON.stringify(agentId)} has a partial install record.`,
+        message: `Claw agent ${JSON.stringify(agentId)} has an incomplete install record (${record.install.status}).`,
         path: `claws.${agentId}`,
         target: agentId,
         requirement: "Claw installs should complete or retain explicit partial ownership state",
