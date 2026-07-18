@@ -840,7 +840,7 @@ describe("openclaw state database", () => {
     const options = { env: { OPENCLAW_STATE_DIR: stateDir } };
     const opened = openOpenClawStateDatabase(options);
     const databasePath = opened.path;
-    closeOpenClawStateDatabaseForTest(options);
+    closeOpenClawStateDatabaseForTest();
 
     const { DatabaseSync } = requireNodeSqlite();
     const writer = new DatabaseSync(databasePath);
