@@ -26,6 +26,13 @@ const mocks = vi.hoisted(() => ({
     }),
   ),
   extraGatewayServiceToRepairEffects: vi.fn((): readonly HealthRepairEffect[] => []),
+  collectClawStateHealthFindings: vi.fn(
+    async (_options?: {
+      cronGateway?: {
+        list: (opts?: { includeDisabled?: boolean }) => Promise<readonly unknown[]>;
+      };
+    }) => [],
+  ),
 }));
 
 vi.mock("../agents/model-catalog.js", () => ({
@@ -36,6 +43,10 @@ vi.mock("../commands/doctor-gateway-services.js", () => ({
   detectExtraGatewayServiceIssues: mocks.detectExtraGatewayServiceIssues,
   extraGatewayServiceToHealthFinding: mocks.extraGatewayServiceToHealthFinding,
   extraGatewayServiceToRepairEffects: mocks.extraGatewayServiceToRepairEffects,
+}));
+
+vi.mock("../claws/doctor.js", () => ({
+  collectClawStateHealthFindings: mocks.collectClawStateHealthFindings,
 }));
 
 const runtime = { log() {}, error() {}, exit() {} };
@@ -102,6 +113,9 @@ function createDeps(overrides: Partial<CoreHealthCheckDeps> = {}): CoreHealthChe
       return [];
     },
     async collectGatewayDaemonFindings() {
+      return [];
+    },
+    async listGatewayCronJobs() {
       return [];
     },
     ...overrides,
@@ -199,6 +213,24 @@ describe("CORE_HEALTH_CHECKS", () => {
     expect(createCoreHealthChecks(createDeps()).map((check) => check.id)).toContain(
       "core/doctor/claws-state",
     );
+  });
+
+  it("passes one live Gateway cron inventory provider to Claw diagnostics", async () => {
+    vi.stubEnv("OPENCLAW_EXPERIMENTAL_CLAWS", "1");
+    const listGatewayCronJobs = vi.fn(async () => []);
+    mocks.collectClawStateHealthFindings.mockImplementationOnce(async (options) => {
+      await options?.cronGateway?.list({ includeDisabled: true });
+      return [];
+    });
+    const check = getCheck(
+      createCoreHealthChecks(createDeps({ listGatewayCronJobs })),
+      "core/doctor/claws-state",
+    );
+    const ctx = { mode: "doctor" as const, runtime, cfg: {} };
+
+    await expect(check.detect(ctx)).resolves.toEqual([]);
+    expect(listGatewayCronJobs).toHaveBeenCalledOnce();
+    expect(listGatewayCronJobs).toHaveBeenCalledWith(ctx);
   });
 
   it("omits Claw state diagnostics without the experiment", () => {

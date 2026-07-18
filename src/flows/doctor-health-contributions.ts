@@ -13,6 +13,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { buildGatewayConnectionDetails } from "../gateway/call.js";
 import type { UpdatePostInstallDoctorResult } from "../infra/update-doctor-result.js";
 import type { RuntimeEnv } from "../runtime.js";
+import { hasActiveGatewayExecCredential } from "./doctor-gateway-exec-credential.js";
 import { normalizeHealthCheck } from "./health-check-adapter.js";
 import type { HealthCheckInput, RunnableHealthCheck } from "./health-check-runner-types.js";
 import type { HealthCheck, HealthCheckContext, HealthFinding } from "./health-checks.js";
@@ -1049,33 +1050,6 @@ async function detectSystemdLingerFindings(
       fixHint: `Run: sudo loginctl enable-linger ${status.user}`,
     },
   ];
-}
-
-async function hasActiveGatewayExecCredential(
-  ctx: Pick<DoctorHealthFlowContext, "cfg">,
-  mode: DoctorFlowMode = resolveDoctorMode(ctx.cfg),
-): Promise<boolean> {
-  const { resolveSecretInputRef } = await loadSecretTypesModule();
-  const { gatewaySecretInputPathCanWin } = await import("../gateway/credentials-secret-inputs.js");
-  const { ALL_GATEWAY_SECRET_INPUT_PATHS, readGatewaySecretInputValue } =
-    await import("../gateway/secret-input-paths.js");
-  return ALL_GATEWAY_SECRET_INPUT_PATHS.some((path) => {
-    if (
-      !gatewaySecretInputPathCanWin({
-        config: ctx.cfg,
-        env: process.env,
-        modeOverride: mode,
-        path,
-      })
-    ) {
-      return false;
-    }
-    const ref = resolveSecretInputRef({
-      value: readGatewaySecretInputValue(ctx.cfg, path),
-      defaults: ctx.cfg.secrets?.defaults,
-    }).ref;
-    return ref?.source === "exec";
-  });
 }
 
 async function collectWorkspaceStatusPluginVersionDrift(params: {

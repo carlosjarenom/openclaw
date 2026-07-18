@@ -31,6 +31,7 @@ import {
 import { collectDisabledCodexPluginRouteIssues } from "../commands/doctor/shared/codex-route-warnings.js";
 import type { ConfigValidationIssue, OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveSecretInputRef, type SecretRef } from "../config/types.secrets.js";
+import type { CronJob } from "../cron/types.js";
 import { hasAmbiguousGatewayAuthModeConfig } from "../gateway/auth-mode-policy.js";
 import { resolveGatewayAuthToken } from "../gateway/auth-token-resolution.js";
 import { resolveGatewayAuth } from "../gateway/auth.js";
@@ -38,6 +39,7 @@ import { getSkippedExecRefStaticError } from "../secrets/exec-resolution-policy.
 import type { SkillStatusEntry } from "../skills/discovery/status.js";
 import { resolveSkillWorkshopConfig } from "../skills/workshop/config.js";
 import { detectSkillWorkshopToolPolicyDiagnostic } from "../skills/workshop/tool-policy-diagnostic.js";
+import { hasActiveGatewayExecCredential } from "./doctor-gateway-exec-credential.js";
 import { registerHealthCheck } from "./health-check-registry.js";
 import type { SplitHealthCheckInput } from "./health-check-runner-types.js";
 import type {
@@ -85,6 +87,7 @@ export type CoreHealthCheckDeps = {
   readonly collectGatewayDaemonFindings: (
     ctx: HealthCheckContext,
   ) => Promise<readonly HealthFinding[]>;
+  readonly listGatewayCronJobs: (ctx: HealthCheckContext) => Promise<readonly CronJob[]>;
 };
 
 async function detectUnavailableSkillsWithRuntime(
@@ -150,6 +153,31 @@ async function collectGatewayDaemonFindingsWithRuntime(
   return runtime.collectGatewayDaemonFindings(ctx);
 }
 
+async function listGatewayCronJobsWithRuntime(
+  ctx: HealthCheckContext,
+): Promise<readonly CronJob[]> {
+  if (
+    (await hasActiveGatewayExecCredential({ cfg: ctx.cfg })) &&
+    ctx.allowExecSecretRefs !== true
+  ) {
+    throw new Error(
+      "Gateway cron inventory skipped because credentials use an exec SecretRef; rerun doctor with --allow-exec.",
+    );
+  }
+  const { callGateway } = await import("../gateway/call.js");
+  const result = await callGateway<{ jobs?: CronJob[] }>({
+    method: "cron.list",
+    params: { includeDisabled: true },
+    timeoutMs: 3000,
+    config: ctx.cfg,
+    deviceIdentity: null,
+  });
+  if (!Array.isArray(result.jobs)) {
+    throw new Error("Gateway returned an invalid cron inventory response.");
+  }
+  return result.jobs;
+}
+
 const defaultCoreHealthCheckDeps: CoreHealthCheckDeps = {
   detectUnavailableSkills: detectUnavailableSkillsWithRuntime,
   collectSecurityWarnings: collectSecurityWarningsWithRuntime,
@@ -159,6 +187,7 @@ const defaultCoreHealthCheckDeps: CoreHealthCheckDeps = {
   collectLocalAudioAccelerationFindings: collectLocalAudioAccelerationFindingsWithRuntime,
   collectGatewayHealthFindings: collectGatewayHealthFindingsWithRuntime,
   collectGatewayDaemonFindings: collectGatewayDaemonFindingsWithRuntime,
+  listGatewayCronJobs: listGatewayCronJobsWithRuntime,
 };
 
 export function configValidationIssuesToHealthFindings(
@@ -1180,6 +1209,9 @@ function createConvertedWorkflowChecks(
                 cfg: ctx.cfg,
                 env: process.env,
                 listMcpServers: listConfiguredMcpServers,
+                cronGateway: {
+                  list: async () => await deps.listGatewayCronJobs(ctx),
+                },
               });
             },
           },
