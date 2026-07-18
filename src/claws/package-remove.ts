@@ -20,7 +20,7 @@ import {
   type PersistedClawPackageRef,
 } from "./provenance.js";
 
-export type ClawReferencedCleanupMode = "retain" | "remove-if-unused" | "remove-selected";
+type ClawReferencedCleanupMode = "retain" | "remove-if-unused" | "remove-selected";
 
 export type ClawReferencedCleanup = {
   mode: ClawReferencedCleanupMode;

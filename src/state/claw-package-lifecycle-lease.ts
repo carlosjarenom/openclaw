@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { formatErrorMessage } from "../infra/errors.js";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
@@ -181,7 +182,9 @@ export function maintainClawPackageLifecycleLease(
   return {
     assertCurrent: () => {
       if (heartbeatError) {
-        throw heartbeatError instanceof Error ? heartbeatError : new Error(String(heartbeatError));
+        throw heartbeatError instanceof Error
+          ? heartbeatError
+          : new Error(formatErrorMessage(heartbeatError));
       }
       lease.heartbeat();
     },
