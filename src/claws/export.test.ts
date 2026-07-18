@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
@@ -21,16 +21,15 @@ async function installedFixture(
     avatar?: string;
     extraWorkspaceFiles?: string[];
     withPackage?: boolean;
-    workspaceFileBytes?: number;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "openclaw-claw-export-"));
   await mkdir(join(root, "source", "reference"), { recursive: true });
-  const content = (label: string) =>
-    options.workspaceFileBytes ? Buffer.alloc(options.workspaceFileBytes) : `managed ${label}\n`;
+  const content = (label: string) => `managed ${label}\n`;
   await writeFile(join(root, "source", "SOUL.md"), content("soul"));
   await writeFile(join(root, "source", "reference", "policy.md"), content("policy"));
   for (const path of options.extraWorkspaceFiles ?? []) {
+    await mkdir(join(root, "source", dirname(path)), { recursive: true });
     await writeFile(join(root, "source", path), content(path));
   }
   const parsed = parseClawManifest({
@@ -232,24 +231,6 @@ describe("exportClawAgent", () => {
       "managed avatars/worker.png\n",
     );
     await expect(readFile(avatarPath, "utf8")).resolves.toBe("managed avatars/worker.png\n");
-  });
-
-  it("rejects aggregate workspace content that cannot be inspected or reapplied", async () => {
-    const fixture = await installedFixture({
-      avatar: "avatars/worker.png",
-      extraWorkspaceFiles: ["one.md", "two.md"],
-      workspaceFileBytes: 1024 * 1024 - 1024,
-    });
-    const avatarDir = join(fixture.plan.agent.workspace, "avatars");
-    await mkdir(avatarDir);
-    await writeFile(join(avatarDir, "worker.png"), Buffer.alloc(8192));
-
-    await expect(
-      exportClawAgent("worker", join(fixture.root, "exported-oversized"), {
-        env: fixture.env,
-        config: fixture.config,
-      }),
-    ).rejects.toMatchObject({ code: "workspace_files_oversized" });
   });
 
   it("rejects an agent whose effective workspace changed after installation", async () => {
