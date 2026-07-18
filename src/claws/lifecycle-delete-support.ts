@@ -48,7 +48,7 @@ export class ClawRemoveError extends Error {
   }
 }
 
-export function clawStateTableExists(db: DatabaseSync, name: string): boolean {
+function clawStateTableExists(db: DatabaseSync, name: string): boolean {
   return Boolean(
     db /* sqlite-allow-raw: schema probe for optional Claw state tables. */
       .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")

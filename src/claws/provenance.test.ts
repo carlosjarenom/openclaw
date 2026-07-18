@@ -620,7 +620,7 @@ describe("applyClawAddPlan", () => {
     expect(result).toMatchObject({
       status: "partial",
       cronJobs: [{ manifestId: "daily-report", status: "failed" }],
-      installRecord: { status: "partial" },
+      installRecord: { status: "config_committed" },
       error: { code: "cron_install_failed", message: "gateway unavailable" },
     });
   });
