@@ -32,11 +32,11 @@ import { readClawWorkspaceFiles } from "./workspace.js";
 
 const CLAW_STATUS_SCHEMA_VERSION = "openclaw.clawStatus.v1" as const;
 
-export type ClawMcpServerStatus = PersistedClawMcpServerRef & {
+type ClawMcpServerStatus = PersistedClawMcpServerRef & {
   state: "present" | "modified" | "missing" | "pending" | "failed";
 };
 
-export type ClawStatusRecord = {
+type ClawStatusRecord = {
   install: PersistedClawInstall;
   orphaned?: boolean;
   agentState: "present" | "modified" | "missing";
@@ -46,7 +46,7 @@ export type ClawStatusRecord = {
   cronJobs: PersistedClawCronRef[];
 };
 
-export type ClawStatusResult = {
+type ClawStatusResult = {
   schemaVersion: typeof CLAW_STATUS_SCHEMA_VERSION;
   stability: typeof CLAW_OUTPUT_STABILITY;
   target?: string;
