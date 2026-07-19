@@ -182,7 +182,7 @@ describeControlUiE2e("Control UI custodian event nudge mocked Gateway E2E", () =
     }
   });
 
-  it("sends a wizard-parseable answer when a closed question is skipped", async () => {
+  it("keeps nudges out of a closed question and sends a parseable skip answer", async () => {
     const context = await browser.newContext({
       locale: "en-US",
       serviceWorkers: "block",
@@ -211,6 +211,19 @@ describeControlUiE2e("Control UI custodian event nudge mocked Gateway E2E", () =
       await page.goto(`${server.baseUrl}custodian`);
       const skip = page.getByRole("button", { name: "Skip for now" });
       await skip.waitFor();
+      await gateway.emitGatewayEvent("health", {
+        channelLabels: { discord: "Discord" },
+        channels: { discord: { configured: true, connected: false, running: true } },
+      });
+      const nudge = page.getByRole("button", {
+        name: "Discord just disconnected — ask me what happened",
+      });
+      await nudge.waitFor();
+      await expect.poll(() => nudge.isDisabled()).toBe(true);
+      await nudge.evaluate((element) => (element as HTMLButtonElement).click());
+      await settleUi(page);
+      expect(await gateway.getRequests("openclaw.chat")).toHaveLength(1);
+
       await gateway.setMethodResponse("openclaw.chat", {
         sessionId: "e2e-wizard-custodian",
         reply: "Moving on.",

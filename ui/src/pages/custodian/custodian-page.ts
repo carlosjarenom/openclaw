@@ -511,7 +511,7 @@ export class CustodianPage extends OpenClawLightDomElement {
 
   private async sendEventNudge(): Promise<void> {
     const nudge = this.eventNudge;
-    if (!nudge || this.sensitive) {
+    if (!nudge || this.sensitive || this.hasUnresolvedQuestion()) {
       return;
     }
     this.eventNudge = null;
@@ -559,6 +559,15 @@ export class CustodianPage extends OpenClawLightDomElement {
       }
     }
     this.answeredQuestions = answered;
+  }
+
+  private hasUnresolvedQuestion(): boolean {
+    return this.messages.some(
+      (message) =>
+        message.question !== null &&
+        !this.dismissedQuestions.has(`${message.id}:${message.question.id}`) &&
+        !this.answeredQuestions.has(`${message.id}:${message.question.id}`),
+    );
   }
 
   private exitSetup(): void {
@@ -626,7 +635,8 @@ export class CustodianPage extends OpenClawLightDomElement {
                   ?disabled=${!this.activeClient ||
                   !this.chatAvailable ||
                   this.sending ||
-                  this.sensitive}
+                  this.sensitive ||
+                  this.hasUnresolvedQuestion()}
                   @click=${() => void this.sendEventNudge()}
                 >
                   ${eventNudgeState.eventNudgeText(this.eventNudge)}
