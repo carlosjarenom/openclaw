@@ -206,6 +206,16 @@ class OpenClawBoardView extends OpenClawLightDomElement {
     frameLoadFailed: async (name) => {
       await this.callbacks?.frameLoadFailed?.(name);
     },
+    widgetAppView: async (name, revision) =>
+      (await this.callbacks?.widgetAppView?.(name, revision)) ?? {
+        status: "stale",
+        error: "MCP App view unavailable",
+      },
+    refreshWidgetAppView: async (name, revision) =>
+      (await this.callbacks?.refreshWidgetAppView?.(name, revision)) ?? {
+        status: "stale",
+        error: "MCP App view unavailable",
+      },
   };
 
   private beginGesture(
@@ -562,6 +572,7 @@ class OpenClawBoardView extends OpenClawLightDomElement {
                 .widget=${widget}
                 .rect=${rect}
                 .tabs=${tabs}
+                .sessionKey=${sessionKey}
                 .widgetFrameUrl=${this.widgetFrameUrl}
                 .callbacks=${this.cellCallbacks}
                 .dragging=${widget.name === this.gestureName}

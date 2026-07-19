@@ -114,6 +114,9 @@ function coerceCanvasPreview(
               ? { uiResourceUri: mcpApp.uiResourceUri }
               : {}),
             ...(typeof mcpApp.toolCallId === "string" ? { toolCallId: mcpApp.toolCallId } : {}),
+            ...(typeof mcpApp.originSessionKey === "string"
+              ? { originSessionKey: mcpApp.originSessionKey }
+              : {}),
           },
         }
       : {}),
