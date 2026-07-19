@@ -113,6 +113,7 @@ describeControlUiE2e("Control UI custodian event nudge mocked Gateway E2E", () =
         });
       }
 
+      await gateway.deferNext("openclaw.chat");
       await nudge.click();
       await expect.poll(async () => (await gateway.getRequests("openclaw.chat")).length).toBe(2);
       const requests = await gateway.getRequests("openclaw.chat");
@@ -121,6 +122,11 @@ describeControlUiE2e("Control UI custodian event nudge mocked Gateway E2E", () =
         sessionId: "e2e-custodian",
       });
       await page.locator(".chat-group.user", { hasText: "what happened with telegram?" }).waitFor();
+      await gateway.resolveDeferred("openclaw.chat", {
+        sessionId: "e2e-custodian",
+        reply: "I'm watching the system.",
+        action: "none",
+      });
       await expect.poll(() => page.locator(".chat-group.assistant").count()).toBe(2);
       expect(await nudge.count()).toBe(0);
 
