@@ -463,7 +463,15 @@ export class CustodianPage extends OpenClawLightDomElement {
     }
   }
 
-  private async send(text = this.input, display?: string): Promise<boolean> {
+  private async send(
+    text = this.input,
+    display?: string,
+    questionReply = this.hasUnresolvedQuestion(),
+  ): Promise<boolean> {
+    const scopeKey = this.sessionScopeKey;
+    if (questionReply) {
+      this.questionReplyUncertain = true;
+    }
     // Trim decides emptiness only; sensitive values (credentials) may carry
     // meaningful whitespace and must reach the agent exactly as entered.
     const message = this.sensitive ? text : text.trim();
@@ -484,11 +492,15 @@ export class CustodianPage extends OpenClawLightDomElement {
       },
     ];
     this.input = "";
-    return await this.requestReply(client, {
+    const sent = await this.requestReply(client, {
       sessionId: this.sessionId,
       ...this.welcomeVariant(),
       message,
     });
+    if (questionReply && scopeKey === this.sessionScopeKey) {
+      this.questionReplyUncertain = !sent;
+    }
+    return sent;
   }
 
   private async sendEventNudge(): Promise<void> {
@@ -518,9 +530,7 @@ export class CustodianPage extends OpenClawLightDomElement {
     }
     this.dismissedQuestions = new Set(this.dismissedQuestions).add(`${message.id}:${question.id}`);
     // Closed questions are hosted wizard steps; the bridge accepts `cancel`.
-    this.trackQuestionReply(
-      this.send(question.isOther ? t("optionCard.skip") : "cancel", t("optionCard.skip")),
-    );
+    void this.send(question.isOther ? t("optionCard.skip") : "cancel", t("optionCard.skip"), true);
   }
 
   private answerQuestion(message: CustodianMessage, label: string): void {
@@ -532,17 +542,7 @@ export class CustodianPage extends OpenClawLightDomElement {
     this.answeredQuestions = new Set(this.answeredQuestions).add(`${message.id}:${question.id}`);
     // The transcript shows the friendly label; the engine receives the reply
     // text it actually parses (wizard answers, canonical commands).
-    this.trackQuestionReply(this.send(option?.reply ?? label, label));
-  }
-
-  private trackQuestionReply(reply: Promise<boolean>): void {
-    const scopeKey = this.sessionScopeKey;
-    this.questionReplyUncertain = true;
-    void reply.then((sent) => {
-      if (scopeKey === this.sessionScopeKey) {
-        this.questionReplyUncertain = !sent;
-      }
-    });
+    void this.send(option?.reply ?? label, label, true);
   }
 
   private retireQuestions(): void {
