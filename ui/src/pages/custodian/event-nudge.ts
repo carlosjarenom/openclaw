@@ -7,6 +7,16 @@ export type CustodianEventNudge = {
   message: string;
 };
 
+export function selectCustodianEventNudge(
+  current: CustodianEventNudge | null,
+  next: CustodianEventNudge | null,
+): CustodianEventNudge | null {
+  if (!next || !current || next.severity > current.severity) {
+    return next;
+  }
+  return next.severity === current.severity && next.message !== current.message ? next : current;
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 const CONSEQUENTIAL_CHANNEL_STATES = new Set([

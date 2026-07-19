@@ -323,7 +323,7 @@ describe("custodian page nudges", () => {
     expect(request).toHaveBeenCalledOnce();
   });
 
-  it("replaces a pending nudge only with a more severe event", async () => {
+  it("replaces a pending nudge with an equal-or-more-severe event", async () => {
     const request = vi.fn().mockResolvedValue({
       sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
       reply: "Everything is healthy.",
@@ -351,7 +351,7 @@ describe("custodian page nudges", () => {
       },
     });
     await page.updateComplete;
-    expect(page.querySelector(".custodian__nudge")?.textContent).toContain("Telegram is degraded");
+    expect(page.querySelector(".custodian__nudge")?.textContent).toContain("Discord is degraded");
 
     emitGatewayEvent({
       event: "health",
@@ -364,6 +364,35 @@ describe("custodian page nudges", () => {
     expect(page.querySelector(".custodian__nudge")?.textContent).toContain(
       "Discord just disconnected",
     );
+  });
+
+  it("clears a pending nudge when health recovers", async () => {
+    const request = vi.fn().mockResolvedValue({
+      sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+      reply: "Everything is healthy.",
+      action: "none",
+    });
+    const { context, emitGatewayEvent } = createContext(request);
+    const { page } = await mountPage(context, { onboarding: false });
+    await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+
+    emitGatewayEvent({
+      event: "health",
+      payload: {
+        channels: { telegram: { configured: true, running: true, connected: false } },
+      },
+    });
+    await page.updateComplete;
+    expect(page.querySelector(".custodian__nudge")).not.toBeNull();
+
+    emitGatewayEvent({
+      event: "health",
+      payload: {
+        channels: { telegram: { configured: true, running: true, connected: true } },
+      },
+    });
+    await page.updateComplete;
+    expect(page.querySelector(".custodian__nudge")).toBeNull();
   });
 
   it("sends a real message when an event nudge is clicked", async () => {
@@ -379,6 +408,7 @@ describe("custodian page nudges", () => {
     emitGatewayEvent({
       event: "health",
       payload: {
+        channelLabels: { telegram: "Telegram" },
         channels: {
           telegram: { configured: true, tokenStatus: "configured_unavailable" },
         },
@@ -392,6 +422,197 @@ describe("custodian page nudges", () => {
       message: "what happened with telegram authentication?",
     });
     expect(page.textContent).toContain("what happened with telegram authentication?");
+    await waitForFast(() => expect(page.querySelector(".custodian__nudge")).toBeNull());
+  });
+
+  it("does not send an event nudge while a sensitive reply is active", async () => {
+    const request = vi.fn().mockResolvedValue({
+      sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+      reply: "Paste your token.",
+      sensitive: true,
+      action: "none",
+    });
+    const { context, emitGatewayEvent } = createContext(request);
+    const { page } = await mountPage(context, { onboarding: false });
+    await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+
+    emitGatewayEvent({
+      event: "health",
+      payload: {
+        channels: {
+          discord: { configured: true, tokenStatus: "configured_unavailable" },
+        },
+      },
+    });
+    await page.updateComplete;
+    const action = page.querySelector<HTMLButtonElement>(".custodian__nudge-action")!;
+    expect(action.disabled).toBe(true);
+    action.click();
+    await page.updateComplete;
+
+    expect(request).toHaveBeenCalledOnce();
+    expect(page.querySelector(".custodian__nudge")).not.toBeNull();
+  });
+
+  it("restores an event nudge after its request fails", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+        reply: "Everything is healthy.",
+        action: "none",
+      })
+      .mockRejectedValueOnce(new Error("Request failed"));
+    const { context, emitGatewayEvent } = createContext(request);
+    const { page } = await mountPage(context, { onboarding: false });
+    await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+
+    emitGatewayEvent({
+      event: "health",
+      payload: {
+        channelLabels: { telegram: "Telegram" },
+        channels: {
+          telegram: { configured: true, tokenStatus: "configured_unavailable" },
+        },
+      },
+    });
+    await page.updateComplete;
+    page.querySelector<HTMLButtonElement>(".custodian__nudge-action")!.click();
+
+    await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
+    await waitForFast(() => expect(page.querySelector('[role="alert"]')).not.toBeNull());
+    await page.updateComplete;
+    expect(page.querySelector(".custodian__nudge")?.textContent).toContain(
+      "Telegram authentication degraded",
+    );
+  });
+
+  it("keeps a newer health failure when an earlier nudge send succeeds", async () => {
+    let resolveNudge!: (value: { sessionId: string; reply: string; action: "none" }) => void;
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+        reply: "Everything is healthy.",
+        action: "none",
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveNudge = resolve;
+          }),
+      );
+    const { context, emitGatewayEvent } = createContext(request);
+    const { page } = await mountPage(context, { onboarding: false });
+    await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+
+    emitGatewayEvent({
+      event: "health",
+      payload: {
+        channelLabels: { telegram: "Telegram" },
+        channels: { telegram: { configured: true, healthState: "stale-socket" } },
+      },
+    });
+    await page.updateComplete;
+    page.querySelector<HTMLButtonElement>(".custodian__nudge-action")!.click();
+    await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
+
+    emitGatewayEvent({
+      event: "health",
+      payload: {
+        channelLabels: { discord: "Discord" },
+        channels: { discord: { configured: true, running: true, connected: false } },
+      },
+    });
+    resolveNudge({
+      sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+      reply: "Telegram checked.",
+      action: "none",
+    });
+
+    await waitForFast(() => expect(page.textContent).toContain("Telegram checked."));
+    await page.updateComplete;
+    expect(page.querySelector(".custodian__nudge")?.textContent).toContain(
+      "Discord just disconnected",
+    );
+  });
+
+  it("consumes a nudge after an unchanged health snapshot arrives while sending", async () => {
+    let resolveNudge!: (value: { sessionId: string; reply: string; action: "none" }) => void;
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+        reply: "Everything is healthy.",
+        action: "none",
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveNudge = resolve;
+          }),
+      );
+    const { context, emitGatewayEvent } = createContext(request);
+    const { page } = await mountPage(context, { onboarding: false });
+    await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+    const degradedHealth = {
+      channels: { telegram: { configured: true, healthState: "stale-socket" } },
+    };
+
+    emitGatewayEvent({ event: "health", payload: degradedHealth });
+    await page.updateComplete;
+    page.querySelector<HTMLButtonElement>(".custodian__nudge-action")!.click();
+    await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
+
+    emitGatewayEvent({ event: "health", payload: degradedHealth });
+    resolveNudge({
+      sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+      reply: "Telegram checked.",
+      action: "none",
+    });
+
+    await waitForFast(() => expect(page.querySelector(".custodian__nudge")).toBeNull());
+  });
+
+  it("does not restore a failed nudge after health recovers while sending", async () => {
+    let rejectNudge!: (error: Error) => void;
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+        reply: "Everything is healthy.",
+        action: "none",
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectNudge = reject;
+          }),
+      );
+    const { context, emitGatewayEvent } = createContext(request);
+    const { page } = await mountPage(context, { onboarding: false });
+    await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+
+    emitGatewayEvent({
+      event: "health",
+      payload: {
+        channels: { telegram: { configured: true, running: true, connected: false } },
+      },
+    });
+    await page.updateComplete;
+    page.querySelector<HTMLButtonElement>(".custodian__nudge-action")!.click();
+    await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
+
+    emitGatewayEvent({
+      event: "health",
+      payload: {
+        channels: { telegram: { configured: true, running: true, connected: true } },
+      },
+    });
+    rejectNudge(new Error("Request failed"));
+
+    await waitForFast(() => expect(page.querySelector('[role="alert"]')).not.toBeNull());
+    await page.updateComplete;
     expect(page.querySelector(".custodian__nudge")).toBeNull();
   });
 
