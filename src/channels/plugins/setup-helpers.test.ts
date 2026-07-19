@@ -324,6 +324,33 @@ describe("moveSingleAccountChannelSectionToDefaultAccount", () => {
     expect(next.channels?.matrix?.accessToken).toBeUndefined();
   });
 
+  it("preserves explicit account values while promoting legacy root defaults", () => {
+    const next = moveSingleAccountChannelSectionToDefaultAccount({
+      cfg: asConfig({
+        channels: {
+          demo: {
+            dmPolicy: "disabled",
+            allowFrom: ["root"],
+            accounts: {
+              work: {
+                dmPolicy: "allowlist",
+                allowFrom: ["work"],
+              },
+            },
+          },
+        },
+      }),
+      channelKey: "demo",
+    });
+
+    const channel = channelRecord(next, "demo");
+    const work = accountRecord(channel, "work");
+    expect(work.dmPolicy).toBe("allowlist");
+    expect(work.allowFrom).toEqual(["work"]);
+    expect(channel.dmPolicy).toBeUndefined();
+    expect(channel.allowFrom).toBeUndefined();
+  });
+
   it("promotes legacy Matrix keys into an existing non-canonical default account key", () => {
     const next = moveSingleAccountChannelSectionToDefaultAccount({
       cfg: asConfig({

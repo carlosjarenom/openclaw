@@ -423,10 +423,13 @@ function moveSingleAccountKeysIntoAccount(params: {
   targetAccountId: string;
   baseAccount?: Record<string, unknown>;
 }): OpenClawConfig {
-  const nextAccount: Record<string, unknown> = { ...params.baseAccount };
+  const nextAccount: Record<string, unknown> = {};
   for (const key of params.keysToMove) {
     nextAccount[key] = cloneIfObject(params.channel[key]);
   }
+  // Explicit account values already own this scope. Root-level legacy values only
+  // fill missing fields while the setup flow canonicalizes the config shape.
+  Object.assign(nextAccount, params.baseAccount);
   const nextChannel: ChannelSectionRecord = { ...params.channel };
   for (const key of params.keysToMove) {
     delete nextChannel[key];
