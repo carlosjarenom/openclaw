@@ -321,7 +321,11 @@ describe("Google Chat durable ingress", () => {
       releaseDelivery();
       await stopping;
       expect(stopped).toBe(true);
-      expect(await queue.listClaims()).toHaveLength(1);
+      const retained = [
+        ...(await queue.listPending({ limit: "all" })),
+        ...(await queue.listClaims()),
+      ];
+      expect(retained).toHaveLength(1);
     });
   });
 

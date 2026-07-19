@@ -63,6 +63,7 @@ describe("monitorSignalProvider tool results", () => {
         event: "receive",
         data: JSON.stringify(payload),
       });
+      await vi.waitFor(() => expect(upsertPairingRequestMock).toHaveBeenCalledTimes(1));
       abortController.abort();
     });
 
@@ -264,6 +265,7 @@ describe("monitorSignalProvider tool results", () => {
           },
         }),
       });
+      await vi.waitFor(() => expect(signalRpcRequestMock).toHaveBeenCalledTimes(1));
       abortController.abort();
     });
 
