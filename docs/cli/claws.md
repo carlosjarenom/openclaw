@@ -185,8 +185,8 @@ defaults collide with local state.
 
 Adding a Claw creates the new agent and workspace configuration, writes declared
 workspace files, installs or reuses declared skill and plugin artifacts, and
-records provenance. Existing files are not overwritten, and retries fail closed
-when owned content drifted. Later Claws stages add other declared resources.
+records package, MCP, and cron provenance. Existing files are not overwritten,
+and retries fail closed when owned content drifted.
 
 ## Inspect installed state
 
