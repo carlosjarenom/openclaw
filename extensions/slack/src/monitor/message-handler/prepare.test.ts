@@ -2509,7 +2509,7 @@ Second paragraph should still reach the agent after Slack's preview cutoff.`;
     const { storePath } = storeFixture.makeTmpStorePath();
     const now = Date.now();
     const cfg = {
-      session: { store: storePath },
+      session: { store: storePath, reset: { mode: "daily" } },
       channels: { slack: { enabled: true, replyToMode: "all", groupPolicy: "open" } },
     } as OpenClawConfig;
     const route = resolveAgentRoute({
@@ -2645,7 +2645,7 @@ Second paragraph should still reach the agent after Slack's preview cutoff.`;
     const { storePath } = storeFixture.makeTmpStorePath();
     const now = Date.now();
     const cfg = {
-      session: { store: storePath },
+      session: { store: storePath, reset: { mode: "daily" } },
       channels: { slack: { enabled: true, replyToMode: "all", groupPolicy: "open" } },
     } as OpenClawConfig;
     const route = resolveAgentRoute({
