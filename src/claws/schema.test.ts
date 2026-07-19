@@ -2,11 +2,14 @@
 import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { buildClawAddPlan } from "./lifecycle.js";
 import { readClawManifestFile } from "./reader.js";
 import { parseClawManifest } from "./schema.js";
 import type { ClawManifest, ClawSourceIdentity } from "./types.js";
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 const baseManifest = {
   schemaVersion: 1,
@@ -331,7 +334,7 @@ describe("readClawManifestFile", () => {
   });
 
   it("reads a human-authored CLAW.md package through the same manifest schema", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openclaw-claw-markdown-"));
+    const root = tempDirs.make("openclaw-claw-markdown-");
     await writeFile(
       join(root, "package.json"),
       JSON.stringify({
@@ -373,7 +376,7 @@ describe("readClawManifestFile", () => {
   });
 
   it("accepts a UTF-8 BOM and includes its bytes in snapshot integrity", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openclaw-claw-markdown-bom-"));
+    const root = tempDirs.make("openclaw-claw-markdown-bom-");
     await writeFile(
       join(root, "package.json"),
       JSON.stringify({
@@ -420,7 +423,7 @@ describe("readClawManifestFile", () => {
   });
 
   it("rejects CLAW.md without YAML frontmatter", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openclaw-claw-markdown-invalid-"));
+    const root = tempDirs.make("openclaw-claw-markdown-invalid-");
     const path = join(root, "CLAW.md");
     await writeFile(path, "# Missing manifest\n", "utf8");
 
@@ -433,7 +436,7 @@ describe("readClawManifestFile", () => {
   });
 
   it("returns diagnostics when CLAW.md aliases cannot be resolved", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openclaw-claw-markdown-alias-"));
+    const root = tempDirs.make("openclaw-claw-markdown-alias-");
     const path = join(root, "CLAW.md");
     await writeFile(
       path,
@@ -561,7 +564,7 @@ describe("readClawManifestFile", () => {
   it.runIf(process.platform !== "win32")(
     "uses the declared CLAW.md path when it is an in-package symlink",
     async () => {
-      const root = await mkdtemp(join(tmpdir(), "openclaw-claw-markdown-link-"));
+      const root = tempDirs.make("openclaw-claw-markdown-link-");
       await writeFile(
         join(root, "package.json"),
         JSON.stringify({
