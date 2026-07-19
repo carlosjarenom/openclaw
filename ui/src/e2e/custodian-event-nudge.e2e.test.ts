@@ -121,6 +121,7 @@ describeControlUiE2e("Control UI custodian event nudge mocked Gateway E2E", () =
         sessionId: "e2e-custodian",
       });
       await page.locator(".chat-group.user", { hasText: "what happened with telegram?" }).waitFor();
+      await expect.poll(() => page.locator(".chat-group.assistant").count()).toBe(2);
       expect(await nudge.count()).toBe(0);
 
       await gateway.emitGatewayEvent("health", {

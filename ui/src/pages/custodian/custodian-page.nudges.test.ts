@@ -518,6 +518,45 @@ describe("custodian page nudges", () => {
     expect(page.querySelector("openclaw-option-card")).not.toBeNull();
   });
 
+  it("keeps event nudges blocked after a question reply has an uncertain failure", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+        reply: "Choose one.",
+        action: "none",
+        question: {
+          id: "access",
+          header: "Access",
+          question: "How should OpenClaw work?",
+          options: [{ label: "Full access" }, { label: "Ask first" }],
+          isOther: false,
+        },
+      })
+      .mockRejectedValueOnce(new Error("Request failed"));
+    const { context, emitGatewayEvent } = createContext(request);
+    const { page } = await mountPage(context, { onboarding: false });
+    await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+
+    emitGatewayEvent({
+      event: "health",
+      payload: {
+        channels: { discord: { configured: true, tokenStatus: "configured_unavailable" } },
+      },
+    });
+    await page.updateComplete;
+    page.querySelector<HTMLButtonElement>(".option-card__skip")!.click();
+
+    await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
+    await waitForFast(() => expect(page.querySelector('[role="alert"]')).not.toBeNull());
+    const action = page.querySelector<HTMLButtonElement>(".custodian__nudge-action")!;
+    expect(action.disabled).toBe(true);
+    action.click();
+    await page.updateComplete;
+
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it("restores an event nudge after its request fails", async () => {
     const request = vi
       .fn()

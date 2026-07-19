@@ -12,7 +12,6 @@ import { applicationContext, type ApplicationContext } from "../../app/context.t
 import { icons } from "../../components/icons.ts";
 import "../../components/option-card.ts";
 import { t } from "../../i18n/index.ts";
-import type { MessageGroup } from "../../lib/chat/chat-types.ts";
 import { formatRelativeTimestamp } from "../../lib/format.ts";
 import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import { searchForSession } from "../../lib/sessions/navigation.ts";
@@ -25,31 +24,12 @@ import "../../styles/chat/text.css";
 import "../../styles/custodian.css";
 import { renderChatAvatar } from "../chat/chat-avatar.ts";
 import { renderMessageGroup } from "../chat/components/chat-message.ts";
+import { toMessageGroup, type CustodianMessage } from "./custodian-message.ts";
 import * as eventNudgeState from "./event-nudge.ts";
-import { parseCustodianQuestion, type CustodianStructuredQuestion } from "./structured-question.ts";
+import { parseCustodianQuestion } from "./structured-question.ts";
 
 const SYSTEM_AGENT_CHAT_TIMEOUT_MS = 190_000;
 const SYSTEM_CHANGE_PAGE_SIZE = 50;
-
-type CustodianMessage = {
-  id: number;
-  role: "assistant" | "user";
-  text: string;
-  at: number;
-  question: CustodianStructuredQuestion | null;
-};
-
-function toMessageGroup(message: CustodianMessage): MessageGroup {
-  const key = `msg-${message.id}`;
-  return {
-    kind: "group",
-    key,
-    role: message.role,
-    messages: [{ message: { role: message.role, content: message.text }, key }],
-    timestamp: message.at,
-    isStreaming: false,
-  };
-}
 
 function createSessionId(): string {
   if (typeof crypto.randomUUID === "function") {
@@ -101,6 +81,7 @@ export class CustodianPage extends OpenClawLightDomElement {
   @state() private input = "";
   @state() private sending = false;
   @state() private sensitive = false;
+  @state() private questionReplyUncertain = false;
   @state() private error: string | null = null;
   @state() private dismissedQuestions = new Set<string>();
   @state() private answeredQuestions = new Set<string>();
@@ -265,6 +246,7 @@ export class CustodianPage extends OpenClawLightDomElement {
     this.error = null;
     this.input = "";
     this.sensitive = false;
+    this.questionReplyUncertain = false;
   }
 
   private resetHistory(): void {
@@ -406,7 +388,7 @@ export class CustodianPage extends OpenClawLightDomElement {
     `;
   }
 
-  private appendAssistant(reply: string, question: CustodianStructuredQuestion | null): void {
+  private appendAssistant(reply: string, question: CustodianMessage["question"]): void {
     this.messages = [
       ...this.messages,
       {
@@ -536,7 +518,9 @@ export class CustodianPage extends OpenClawLightDomElement {
     }
     this.dismissedQuestions = new Set(this.dismissedQuestions).add(`${message.id}:${question.id}`);
     // Closed questions are hosted wizard steps; the bridge accepts `cancel`.
-    void this.send(question.isOther ? t("optionCard.skip") : "cancel", t("optionCard.skip"));
+    this.trackQuestionReply(
+      this.send(question.isOther ? t("optionCard.skip") : "cancel", t("optionCard.skip")),
+    );
   }
 
   private answerQuestion(message: CustodianMessage, label: string): void {
@@ -548,7 +532,17 @@ export class CustodianPage extends OpenClawLightDomElement {
     this.answeredQuestions = new Set(this.answeredQuestions).add(`${message.id}:${question.id}`);
     // The transcript shows the friendly label; the engine receives the reply
     // text it actually parses (wizard answers, canonical commands).
-    void this.send(option?.reply ?? label, label);
+    this.trackQuestionReply(this.send(option?.reply ?? label, label));
+  }
+
+  private trackQuestionReply(reply: Promise<boolean>): void {
+    const scopeKey = this.sessionScopeKey;
+    this.questionReplyUncertain = true;
+    void reply.then((sent) => {
+      if (scopeKey === this.sessionScopeKey) {
+        this.questionReplyUncertain = !sent;
+      }
+    });
   }
 
   private retireQuestions(): void {
@@ -562,11 +556,14 @@ export class CustodianPage extends OpenClawLightDomElement {
   }
 
   private hasUnresolvedQuestion(): boolean {
-    return this.messages.some(
-      (message) =>
-        message.question !== null &&
-        !this.dismissedQuestions.has(`${message.id}:${message.question.id}`) &&
-        !this.answeredQuestions.has(`${message.id}:${message.question.id}`),
+    return (
+      this.questionReplyUncertain ||
+      this.messages.some(
+        (message) =>
+          message.question !== null &&
+          !this.dismissedQuestions.has(`${message.id}:${message.question.id}`) &&
+          !this.answeredQuestions.has(`${message.id}:${message.question.id}`),
+      )
     );
   }
 
