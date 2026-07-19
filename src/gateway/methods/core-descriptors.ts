@@ -119,6 +119,7 @@ const CORE_GATEWAY_METHOD_SPECS: readonly CoreGatewayMethodSpec[] = [
   { name: "board.update", scope: "operator.write" },
   { name: "board.widget.put", scope: "operator.write" },
   { name: "board.widget.grant", scope: "operator.approvals" },
+  { name: "board.widget.appView", scope: "operator.read" },
   { name: "board.event", scope: "operator.write" },
   { name: "audit.list", scope: "operator.read" },
   { name: "audit.activity.list", scope: "operator.read" },
