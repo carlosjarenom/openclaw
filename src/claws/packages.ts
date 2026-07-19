@@ -216,6 +216,7 @@ export async function installClawPackages(
           status: "pending",
           relationship: "managed",
           origin: "claw-introduced",
+          independentOwner: false,
         });
         installedPackages.push(packageRef);
         const installed = await installSkill({
@@ -289,6 +290,7 @@ export async function installClawPackages(
         status: "pending",
         relationship: "referenced",
         origin: "claw-introduced",
+        independentOwner: false,
       });
       installedPackages.push(packageRef);
 
