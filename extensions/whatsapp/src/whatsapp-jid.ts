@@ -1,5 +1,6 @@
 // Whatsapp plugin module owns canonical JID parsing and classification.
 import {
+  getServerFromDomainType,
   isHostedLidUser,
   isHostedPnUser,
   isJidGroup,
@@ -8,7 +9,7 @@ import {
   isPnUser,
   jidDecode,
   jidEncode,
-  jidNormalizedUser,
+  WAJIDDomains,
 } from "baileys";
 import { parseWhatsAppJidSyntax } from "./whatsapp-jid-syntax.js";
 
@@ -66,13 +67,29 @@ export function classifyWhatsAppJid(value: string | null | undefined): WhatsAppJ
     return UNSUPPORTED_JID;
   }
   const decoded = jidDecode(parsed.input);
-  if (!decoded || decoded.server !== parsed.server) {
+  if (!decoded || decoded.user !== parsed.user) {
     return UNSUPPORTED_JID;
   }
 
-  // Validate the raw grammar before Baileys strips device/agent data so malformed
-  // values cannot be laundered into an otherwise valid bare JID.
-  const classified = classifyCanonicalJid(jidNormalizedUser(parsed.input));
+  let canonicalInput = parsed.input;
+  if (parsed.kind === "pn" || parsed.kind === "lid") {
+    const decodedServer = decoded.server === "c.us" ? "s.whatsapp.net" : decoded.server;
+    const domainServer = getServerFromDomainType(decodedServer, decoded.domainType as WAJIDDomains);
+    if (
+      decoded.domainType !== parsed.domainType ||
+      decoded.device !== parsed.device ||
+      domainServer !== parsed.server
+    ) {
+      return UNSUPPORTED_JID;
+    }
+    canonicalInput = jidEncode(parsed.user, parsed.server);
+  } else if (decoded.server !== parsed.server || decoded.device !== undefined) {
+    return UNSUPPORTED_JID;
+  }
+
+  // Syntax validation keeps Baileys' domain and device metadata intact until
+  // the canonical routing server is known; only then is device state removed.
+  const classified = classifyCanonicalJid(canonicalInput);
   return classified.kind === parsed.kind ? classified : UNSUPPORTED_JID;
 }
 
@@ -95,6 +112,19 @@ export function classifyWhatsAppDirectJid(
   return classified.kind === "pn" || classified.kind === "lid" ? classified : null;
 }
 
+export function canonicalizeWhatsAppDirectJids(
+  values: ReadonlyArray<string | null | undefined>,
+): string[] {
+  const canonical = new Set<string>();
+  for (const value of values) {
+    const classified = classifyWhatsAppDirectJid(value);
+    if (classified) {
+      canonical.add(classified.jid);
+    }
+  }
+  return [...canonical];
+}
+
 export function areSameWhatsAppJid(
   left: string | null | undefined,
   right: string | null | undefined,
@@ -104,7 +134,7 @@ export function areSameWhatsAppJid(
   if (leftJid.kind === "unsupported" || rightJid.kind === "unsupported") {
     return false;
   }
-  // PN and LID users with the same digits are distinct identities. Only the
-  // mapping owner may establish equivalence across those classes.
-  return leftJid.kind === rightJid.kind && leftJid.jid === rightJid.jid;
+  // Baileys cleanMessage collapses hosted routing domains into their standard
+  // PN/LID form. Cross-class PN/LID equality still requires a verified mapping.
+  return leftJid.kind === rightJid.kind && leftJid.user === rightJid.user;
 }

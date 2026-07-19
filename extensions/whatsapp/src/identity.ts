@@ -1,6 +1,10 @@
 // Whatsapp plugin module implements identity behavior.
 import { jidToE164, normalizeE164 } from "./text-runtime.js";
-import { classifyWhatsAppDirectJid } from "./whatsapp-jid.js";
+import {
+  areSameWhatsAppJid,
+  canonicalizeWhatsAppDirectJids,
+  classifyWhatsAppDirectJid,
+} from "./whatsapp-jid.js";
 
 export type WhatsAppIdentity = {
   jid?: string | null;
@@ -110,21 +114,15 @@ export function prepareWhatsAppInboundActor(params: {
   };
 }
 
-function canonicalizeObservedDirectJids(jids: ReadonlyArray<string | null | undefined>): string[] {
-  return [
-    ...new Set(
-      jids
-        .map((jid) => classifyWhatsAppDirectJid(jid)?.jid)
-        .filter((jid): jid is string => Boolean(jid)),
-    ),
-  ];
-}
-
 function isObservedSelfDirectJid(
   directJid: NonNullable<ReturnType<typeof classifyWhatsAppDirectJid>>,
   self: WhatsAppSelfIdentity,
 ): boolean {
-  if (canonicalizeObservedDirectJids([self.jid, self.lid]).includes(directJid.jid)) {
+  if (
+    canonicalizeWhatsAppDirectJids([self.jid, self.lid]).some((jid) =>
+      areSameWhatsAppJid(directJid.jid, jid),
+    )
+  ) {
     return true;
   }
   return (
@@ -153,7 +151,7 @@ export function prepareWhatsAppDirectInboundActor(params: {
   if (!params.fromMe) {
     return {
       ...actor,
-      comparableJids: canonicalizeObservedDirectJids([params.remoteJid, params.remoteJidAlt]),
+      comparableJids: canonicalizeWhatsAppDirectJids([params.remoteJid, params.remoteJidAlt]),
     };
   }
 
@@ -163,7 +161,7 @@ export function prepareWhatsAppDirectInboundActor(params: {
   return {
     ...actor,
     e164: actor.e164 ?? (isSelfChat ? selfE164 : null),
-    comparableJids: canonicalizeObservedDirectJids([
+    comparableJids: canonicalizeWhatsAppDirectJids([
       params.remoteJid,
       ...(isSelfChat ? [params.self.jid, params.self.lid] : []),
     ]),
@@ -183,11 +181,15 @@ export function identitiesOverlap(
   left: WhatsAppIdentity | WhatsAppSelfIdentity | null | undefined,
   right: WhatsAppIdentity | WhatsAppSelfIdentity | null | undefined,
 ): boolean {
-  const leftValues = new Set(getComparableIdentityValues(left));
-  if (leftValues.size === 0) {
+  const leftValues = getComparableIdentityValues(left);
+  if (leftValues.length === 0) {
     return false;
   }
-  return getComparableIdentityValues(right).some((value) => leftValues.has(value));
+  return getComparableIdentityValues(right).some((rightValue) =>
+    leftValues.some(
+      (leftValue) => leftValue === rightValue || areSameWhatsAppJid(leftValue, rightValue),
+    ),
+  );
 }
 
 export function getSenderIdentity(msg: LegacySenderLike, authDir?: string): WhatsAppIdentity {

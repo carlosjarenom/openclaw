@@ -15,11 +15,7 @@ export function normalizeWhatsAppAllowFromEntry(entry: string): string | null {
   const candidate = stripWhatsAppTargetPrefixes(entry);
   const directJid = parseWhatsAppDirectJidSyntax(candidate);
   if (directJid) {
-    if (
-      directJid.server !== "s.whatsapp.net" &&
-      directJid.server !== "c.us" &&
-      directJid.server !== "hosted"
-    ) {
+    if (directJid.server !== "s.whatsapp.net" && directJid.server !== "hosted") {
       return null;
     }
     return directJid.user;

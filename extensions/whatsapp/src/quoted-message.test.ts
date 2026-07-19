@@ -93,6 +93,19 @@ describe("quoted message metadata cache", () => {
     ).toBeUndefined();
   });
 
+  it("matches hosted and standard forms of the same direct identity", () => {
+    cacheInboundMessageMeta("account-hosted", "277038292303944@lid", "msg-hosted", {
+      body: "same lid actor",
+    });
+
+    expect(lookupForTarget("account-hosted", "277038292303944@hosted.lid", "msg-hosted")).toEqual({
+      remoteJid: "277038292303944@lid",
+      participant: undefined,
+      body: "same lid actor",
+      fromMe: undefined,
+    });
+  });
+
   it("uses the prepared direct-chat identity for hosted PN/LID quote equivalence", () => {
     cacheInboundMessageMeta(
       "account-hosted-map",

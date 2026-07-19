@@ -26,6 +26,15 @@ describe("resolveComparableIdentity", () => {
     ).toBe(false);
   });
 
+  it("overlaps hosted and standard forms of the same identity class", () => {
+    expect(
+      identitiesOverlap({ jid: "15551230000@hosted" }, { jid: "15551230000@s.whatsapp.net" }),
+    ).toBe(true);
+    expect(
+      identitiesOverlap({ lid: "277038292303944@hosted.lid" }, { lid: "277038292303944@lid" }),
+    ).toBe(true);
+  });
+
   it("rejects malformed direct identities instead of partially normalizing them", () => {
     expect(resolveComparableIdentity({ jid: "15551230000:bad@s.whatsapp.net" })).toMatchObject({
       jid: null,
@@ -84,6 +93,25 @@ describe("prepareWhatsAppDirectInboundActor", () => {
       transportJid: "800000000000000:2@lid",
       e164: "+15550000000",
       comparableJids: ["800000000000000@lid", "15550000000@s.whatsapp.net"],
+    });
+  });
+
+  it("recognizes hosted and standard LID forms as the same self-chat actor", () => {
+    expect(
+      prepareWhatsAppDirectInboundActor({
+        remoteJid: "800000000000000:2@hosted.lid",
+        remoteJidAlt: "15550000000:3@s.whatsapp.net",
+        fromMe: true,
+        self,
+      }),
+    ).toEqual({
+      transportJid: "800000000000000:2@hosted.lid",
+      e164: "+15550000000",
+      comparableJids: [
+        "800000000000000@hosted.lid",
+        "15550000000@s.whatsapp.net",
+        "800000000000000@lid",
+      ],
     });
   });
 });

@@ -3,7 +3,7 @@ import type { MiscMessageGenerationOptions } from "baileys";
 import { pruneMapToMaxSize } from "openclaw/plugin-sdk/collection-runtime";
 import {
   areSameWhatsAppJid,
-  classifyWhatsAppDirectJid,
+  canonicalizeWhatsAppDirectJids,
   classifyWhatsAppJid,
 } from "./whatsapp-jid.js";
 
@@ -52,19 +52,6 @@ function directPnE164(jid: string | null | undefined): string | undefined {
   return classified.kind === "pn" ? `+${classified.user}` : undefined;
 }
 
-function canonicalizeWhatsAppDirectJids(
-  values: readonly (string | null | undefined)[] | null | undefined,
-): string[] | undefined {
-  const canonical = new Set<string>();
-  for (const value of values ?? []) {
-    const classified = classifyWhatsAppDirectJid(value);
-    if (classified) {
-      canonical.add(classified.jid);
-    }
-  }
-  return canonical.size > 0 ? [...canonical] : undefined;
-}
-
 export function cacheInboundMessageMeta(
   accountId: string,
   remoteJid: string,
@@ -75,12 +62,13 @@ export function cacheInboundMessageMeta(
   if (!accountId || !messageId || !canonicalRemoteJid) {
     return;
   }
+  const remoteJids = canonicalizeWhatsAppDirectJids(meta.remoteJids ?? []);
   cache.set(makeCacheKey(accountId, canonicalRemoteJid, messageId), {
     ...meta,
     remoteJid: canonicalRemoteJid,
     participant: canonicalizeSupportedJid(meta.participant),
     remoteE164: canonicalizeComparableE164(meta.remoteE164),
-    remoteJids: canonicalizeWhatsAppDirectJids(meta.remoteJids),
+    remoteJids: remoteJids.length > 0 ? remoteJids : undefined,
     ts: Date.now(),
   });
   pruneMapToMaxSize(cache, MAX_ENTRIES);
