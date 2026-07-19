@@ -63,6 +63,7 @@ import {
   type PluginHookBeforeToolCallResult,
   type PluginHookToolInputKind,
   type PluginHookToolKind,
+  type PluginHookToolRequesterContext,
 } from "../plugins/types.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import {
@@ -149,6 +150,8 @@ export type HookContext = {
   approvalReviewerDeviceId?: string;
   trace?: DiagnosticTraceContext;
   channelId?: string;
+  /** Host-derived message requester for sender-aware tool hooks. */
+  requester?: PluginHookToolRequesterContext;
   /** Originating channel for approval delivery routing; mirrors exec approval turn-source fields. */
   turnSourceChannel?: string;
   turnSourceTo?: string;
@@ -1552,6 +1555,7 @@ export async function runBeforeToolCallHook(args: {
       ...(args.ctx?.trace && { trace: freezeDiagnosticTraceContext(args.ctx.trace) }),
       ...(args.toolCallId && { toolCallId: args.toolCallId }),
       ...(args.ctx?.channelId && { channelId: args.ctx.channelId }),
+      ...(args.ctx?.requester ? { requester: args.ctx.requester } : {}),
     });
     const toolContext = buildToolContext(toolIdentity);
     const trustedPolicyResult = shouldRunTrustedPolicies
