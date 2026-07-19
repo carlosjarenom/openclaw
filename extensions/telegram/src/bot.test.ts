@@ -80,12 +80,6 @@ vi.mock("openclaw/plugin-sdk/channel-inbound", async () => {
               resolved;
             return {
               ...plan,
-              // The harness dispatcher creates its reply resources lazily inside
-              // runDispatch, so a skipped prepared turn has nothing to settle.
-              runDispatchLifecycle: {
-                turnAdoptionLifecycle: plan.replyOptions?.turnAdoptionLifecycle,
-                onDispatchSkipped: () => undefined,
-              },
               runDispatch: async () =>
                 await harness.dispatchReplyWithBufferedBlockDispatcher({
                   ctx: plan.ctxPayload,
