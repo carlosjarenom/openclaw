@@ -71,6 +71,27 @@ describe("custodian page nudges", () => {
     );
   });
 
+  it("shows configuration reload failures from health snapshots", async () => {
+    const request = vi.fn().mockResolvedValue({
+      sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+      reply: "Everything is healthy.",
+      action: "none",
+    });
+    const { context, emitGatewayEvent } = createContext(request);
+    const { page } = await mountPage(context, { onboarding: false });
+    await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+
+    emitGatewayEvent({
+      event: "health",
+      payload: { configReload: { hotReloadStatus: "disabled" }, channels: {} },
+    });
+    await page.updateComplete;
+
+    expect(page.querySelector(".custodian__nudge")?.textContent).toContain(
+      "Configuration reload stopped",
+    );
+  });
+
   it("does not report an intentionally stopped channel as disconnected", async () => {
     const request = vi.fn().mockResolvedValue({
       sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
@@ -487,7 +508,7 @@ describe("custodian page nudges", () => {
     );
   });
 
-  it("keeps a newer health failure when an earlier nudge send succeeds", async () => {
+  it("keeps a newer lower-severity failure when an earlier nudge send succeeds", async () => {
     let resolveNudge!: (value: { sessionId: string; reply: string; action: "none" }) => void;
     const request = vi
       .fn()
@@ -510,7 +531,9 @@ describe("custodian page nudges", () => {
       event: "health",
       payload: {
         channelLabels: { telegram: "Telegram" },
-        channels: { telegram: { configured: true, healthState: "stale-socket" } },
+        channels: {
+          telegram: { configured: true, tokenStatus: "configured_unavailable" },
+        },
       },
     });
     await page.updateComplete;
@@ -521,7 +544,7 @@ describe("custodian page nudges", () => {
       event: "health",
       payload: {
         channelLabels: { discord: "Discord" },
-        channels: { discord: { configured: true, running: true, connected: false } },
+        channels: { discord: { configured: true, healthState: "stale-socket" } },
       },
     });
     resolveNudge({
@@ -532,9 +555,7 @@ describe("custodian page nudges", () => {
 
     await waitForFast(() => expect(page.textContent).toContain("Telegram checked."));
     await page.updateComplete;
-    expect(page.querySelector(".custodian__nudge")?.textContent).toContain(
-      "Discord just disconnected",
-    );
+    expect(page.querySelector(".custodian__nudge")?.textContent).toContain("Discord is degraded");
   });
 
   it("consumes a nudge after an unchanged health snapshot arrives while sending", async () => {

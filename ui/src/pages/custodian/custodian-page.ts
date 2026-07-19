@@ -123,6 +123,7 @@ export class CustodianPage extends OpenClawLightDomElement {
   private sessionStarted = false;
   private lastHelloDeviceToken = "";
   private eventNudgeClosed = false;
+  private eventNudgePending: eventNudgeState.CustodianEventNudge | null = null;
   private historyLoaded = false;
   private readonly subscriptions = new SubscriptionsController(this).watch(
     () => this.context?.gateway,
@@ -135,12 +136,11 @@ export class CustodianPage extends OpenClawLightDomElement {
         if (this.onboarding || this.newAgentIntent || this.eventNudgeClosed) {
           return;
         }
-        if (event.event === "health") {
-          this.eventNudge = eventNudgeState.selectCustodianEventNudge(
-            this.eventNudge,
-            eventNudgeState.classifyCustodianEventNudge(event),
-          );
-        }
+        [this.eventNudge, this.eventNudgePending] = eventNudgeState.reconcileCustodianEventNudge(
+          this.eventNudge,
+          this.eventNudgePending,
+          event,
+        );
       }),
   );
 
@@ -226,6 +226,7 @@ export class CustodianPage extends OpenClawLightDomElement {
       this.sessionScopeKey = scopeKey;
       this.sessionStarted = false;
       this.eventNudge = null;
+      this.eventNudgePending = null;
       this.clearConversation();
     } else if (requestWasPending) {
       this.error = t("custodian.connectionChanged");
@@ -513,29 +514,19 @@ export class CustodianPage extends OpenClawLightDomElement {
     if (!nudge || this.sensitive) {
       return;
     }
+    this.eventNudge = null;
+    this.eventNudgePending = nudge;
     const sent = await this.send(nudge.message);
-    if (sent && this.eventNudge === nudge) {
-      this.dismissEventNudge();
+    if (this.eventNudgePending === nudge) {
+      this.eventNudgePending = null;
+      this.eventNudgeClosed = sent;
+      this.eventNudge = sent ? null : nudge;
     }
   }
 
   private dismissEventNudge(): void {
     this.eventNudge = null;
     this.eventNudgeClosed = true;
-  }
-
-  private eventNudgeText(nudge: eventNudgeState.CustodianEventNudge): string {
-    if (nudge.kind === "config-reload") {
-      return t("custodian.nudge.configReload");
-    }
-    const channel = nudge.channelLabel ?? t("custodian.nudge.channelFallback");
-    if (nudge.kind === "channel-auth") {
-      return t("custodian.nudge.channelAuth", { channel });
-    }
-    if (nudge.kind === "channel-disconnected") {
-      return t("custodian.nudge.channelDisconnected", { channel });
-    }
-    return t("custodian.nudge.channelDegraded", { channel });
   }
 
   private dismissQuestion(message: CustodianMessage): void {
@@ -638,7 +629,7 @@ export class CustodianPage extends OpenClawLightDomElement {
                   this.sensitive}
                   @click=${() => void this.sendEventNudge()}
                 >
-                  ${this.eventNudgeText(this.eventNudge)}
+                  ${eventNudgeState.eventNudgeText(this.eventNudge)}
                 </button>
                 <button
                   class="custodian__nudge-dismiss"
