@@ -344,7 +344,7 @@ describe("custodian page nudges", () => {
     expect(request).toHaveBeenCalledOnce();
   });
 
-  it("replaces a pending nudge with an equal-or-more-severe event", async () => {
+  it("replaces a pending nudge with the latest health failure", async () => {
     const request = vi.fn().mockResolvedValue({
       sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
       reply: "Everything is healthy.",
@@ -385,6 +385,16 @@ describe("custodian page nudges", () => {
     expect(page.querySelector(".custodian__nudge")?.textContent).toContain(
       "Discord just disconnected",
     );
+
+    emitGatewayEvent({
+      event: "health",
+      payload: {
+        channelLabels: { telegram: "Telegram" },
+        channels: { telegram: { configured: true, healthState: "stale-socket" } },
+      },
+    });
+    await page.updateComplete;
+    expect(page.querySelector(".custodian__nudge")?.textContent).toContain("Telegram is degraded");
   });
 
   it("clears a pending nudge when health recovers", async () => {

@@ -8,16 +8,6 @@ export type CustodianEventNudge = {
   message: string;
 };
 
-function selectCustodianEventNudge(
-  current: CustodianEventNudge | null,
-  next: CustodianEventNudge | null,
-): CustodianEventNudge | null {
-  if (!next || !current || next.severity > current.severity) {
-    return next;
-  }
-  return next.severity === current.severity && next.message !== current.message ? next : current;
-}
-
 export function reconcileCustodianEventNudge(
   current: CustodianEventNudge | null,
   pending: CustodianEventNudge | null,
@@ -28,7 +18,7 @@ export function reconcileCustodianEventNudge(
   }
   const next = classifyCustodianEventNudge(event);
   if (!pending) {
-    return [selectCustodianEventNudge(current, next), null];
+    return [next, null];
   }
   const sameIncident =
     next !== null && pending.severity === next.severity && pending.message === next.message;
