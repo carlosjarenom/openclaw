@@ -56,7 +56,6 @@ import { createDockPanelLayout } from "../../components/dock-panel-layout.ts";
 import { isCloudWorkerPlacementState } from "../../components/session-row-badges.ts";
 import { t } from "../../i18n/index.ts";
 import {
-  boardExists,
   boardProviderForSession,
   type BoardCommandEvent,
   type BoardProvider,
@@ -68,6 +67,7 @@ import {
   type BoardSessionView,
 } from "../../lib/board/settings.ts";
 import type { BoardSnapshot, BoardTab } from "../../lib/board/types.ts";
+import type { BoardViewSnapshot } from "../../lib/board/view-types.ts";
 import {
   resolveControlUiFollowUpMode,
   resolveControlUiServerQueueMode,
@@ -221,7 +221,7 @@ type PaneSessionChangeOptions = { replace?: boolean };
 type VisibleBoardDock = Exclude<BoardTab["chatDock"], "hidden">;
 type ResolvedBoardView = {
   provider: BoardProvider;
-  snapshot: BoardSnapshot;
+  snapshot: BoardViewSnapshot;
   hasBoard: boolean;
   face: BoardFace;
   activeTabId: string;
@@ -417,7 +417,7 @@ class ChatPane extends OpenClawLightDomElement {
       }
     | undefined;
   private readonly lastVisibleBoardDock = new Map<string, VisibleBoardDock>();
-  private swarmBoardSnapshot: BoardSnapshot | null = null;
+  private swarmBoardSnapshot: BoardViewSnapshot | null = null;
   private swarmBoardSnapshotBase: BoardSnapshot | null = null;
   private swarmBoardSnapshotRequest = 0;
   private headerRenameInitialLabel: string | null = null;
@@ -1554,7 +1554,7 @@ class ChatPane extends OpenClawLightDomElement {
       this.swarmBoardSnapshotBase === baseSnapshot
         ? (this.swarmBoardSnapshot ?? baseSnapshot)
         : baseSnapshot;
-    const hasBoard = boardExists(snapshot);
+    const hasBoard = snapshot.tabs.length > 0 || snapshot.widgets.length > 0;
     const sessionKey = this.resolveBoardSessionKey(snapshot.sessionKey);
     const saved =
       loadSettings().boardSessionViews?.[sessionKey] ??
