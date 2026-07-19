@@ -437,16 +437,20 @@ export function upsertClawMcpServerRef(
     db /* sqlite-allow-raw: Claw MCP lifecycle provenance write. */
       .prepare(
         `INSERT INTO claw_mcp_server_refs (
-         agent_id, name, schema_version, config_digest, ownership, status, error,
+         agent_id, name, schema_version, config_digest, relationship, origin,
+         independent_owner, status, error,
          created_at_ms, updated_at_ms
        ) VALUES (
-         @agent_id, @name, @schema_version, @config_digest, @ownership, @status, @error,
+         @agent_id, @name, @schema_version, @config_digest, @relationship, @origin,
+         @independent_owner, @status, @error,
          @created_at_ms, @updated_at_ms
        )
        ON CONFLICT(agent_id, name) DO UPDATE SET
          schema_version = excluded.schema_version,
          config_digest = excluded.config_digest,
-         ownership = excluded.ownership,
+         relationship = excluded.relationship,
+         origin = excluded.origin,
+         independent_owner = excluded.independent_owner,
          status = excluded.status,
          error = excluded.error,
          updated_at_ms = excluded.updated_at_ms`,
@@ -456,7 +460,9 @@ export function upsertClawMcpServerRef(
         name: ref.name,
         schema_version: ref.schemaVersion,
         config_digest: ref.configDigest,
-        ownership: ref.ownership,
+        relationship: ref.relationship,
+        origin: ref.origin,
+        independent_owner: ref.independentOwner ? 1 : 0,
         status: ref.status,
         error: ref.error ?? null,
         created_at_ms: ref.createdAtMs,

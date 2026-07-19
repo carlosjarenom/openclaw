@@ -86,7 +86,7 @@ export function registerClawsCli(program: Command) {
     .argument("<claw-or-agent>", "Installed package name or final agent id")
     .option("--from <source>", "Override the target source recorded at Claw add time")
     .option("--dry-run", "Preview update actions without mutating state", false)
-    .option("--yes", "Confirm the supported update actions", false)
+    .option("--yes", "Confirm the exact supported update plan", false)
     .option("--plan-integrity <digest>", "Bind consent to an exact update plan")
     .option("--json", "Print JSON", false)
     .action(async (target: string, opts: ClawsUpdateOptions) => {

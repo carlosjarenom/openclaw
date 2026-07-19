@@ -353,6 +353,8 @@ export async function installClawPackages(
       });
       installedPackages.push(packageRef);
 
+      // The installer has no mutation receipt. Mark the boundary before calling it so a throw
+      // after an on-disk change is treated as uncertain instead of falsely reported as rolled back.
       options.onExternalMutation?.(pkg);
       await installPlugin({
         raw: `clawhub:${pkg.ref}@${pkg.version}`,

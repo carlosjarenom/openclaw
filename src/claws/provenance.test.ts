@@ -11,12 +11,12 @@ import {
 import { applyClawAddPlan, ClawAddMutationError } from "./add.js";
 import { ClawCronInstallError } from "./cron.js";
 import { buildClawAddPlan } from "./lifecycle.js";
+import { replaceClawPackageRefExpected } from "./package-update-provenance.js";
 import {
   persistClawInstallRecord,
   persistClawPackageRef,
   readClawInstallRecord,
   readClawPackageRefs,
-  replaceClawPackageRefExpected,
   updateClawInstallRecord,
   updateClawInstallRecordStatus,
   updateClawPackageRefStatus,

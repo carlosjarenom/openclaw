@@ -1,7 +1,7 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { applyClawAddPlan } from "./add.js";
@@ -13,10 +13,11 @@ import { applyClawWorkspaceUpdate } from "./workspace-update.js";
 import { readClawWorkspaceFiles } from "./workspace.js";
 
 afterEach(() => closeOpenClawStateDatabaseForTest());
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 describe("applyClawWorkspaceUpdate", () => {
   it("applies add/change/remove actions and can roll them back with provenance", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openclaw-claw-workspace-update-"));
+    const root = tempDirs.make("openclaw-claw-workspace-update-");
     const currentRoot = join(root, "current");
     const targetRoot = join(root, "target");
     await mkdir(currentRoot);

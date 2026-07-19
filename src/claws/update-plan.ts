@@ -13,6 +13,7 @@ import { readClawStatus } from "./lifecycle-state.js";
 import { buildClawAddPlan } from "./lifecycle.js";
 import { digestClawMcpServer, readClawMcpServerRefsByName } from "./mcp.js";
 import type { PackageRemovalDeps } from "./package-remove.js";
+import { digestClawPackageRef } from "./package-update-provenance.js";
 import { readClawPackageRefs } from "./provenance.js";
 import {
   CLAW_OUTPUT_STABILITY,
@@ -455,7 +456,7 @@ export async function buildClawUpdatePlan(params: {
               : action === "unchanged"
                 ? "Recorded package reference already matches the exact target version."
                 : "Target manifest changes the exact package version.",
-        ...(current ? { currentDigest: digest(current) } : {}),
+        ...(current ? { currentDigest: digestClawPackageRef(current) } : {}),
         desiredDigest: digest(target),
       });
       const capabilityChange = packageCapabilityChange({
@@ -497,7 +498,7 @@ export async function buildClawUpdatePlan(params: {
             : action === "release"
               ? "Target manifest releases this referenced package while preserving the shared artifact."
               : "Target manifest removes this managed package reference; apply may remove the unchanged artifact when it is otherwise unused.",
-          currentDigest: digest(current),
+          currentDigest: digestClawPackageRef(current),
         });
         const capabilityChange = packageCapabilityChange({
           pkg: current,

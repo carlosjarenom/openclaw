@@ -39,7 +39,10 @@ export async function applyClawMcpUpdate(
     setServer?: typeof setConfiguredMcpServer;
     unsetServer?: typeof unsetConfiguredMcpServer;
     readRefs?: typeof readClawMcpServerRefs;
-    planRemoval?: typeof planClawMcpServerRemoval;
+    planRemoval?: (
+      ref: PersistedClawMcpServerRef,
+      options: OpenClawStateDatabaseOptions,
+    ) => { action: "remove" | "release" };
     upsertRef?: typeof upsertClawMcpServerRef;
     deleteRef?: typeof deleteClawMcpServerRef;
   },
@@ -99,7 +102,7 @@ export async function applyClawMcpUpdate(
         const exactLiveConfig =
           previousServer !== undefined &&
           digestClawMcpServer(previousServer) === previousRef.configDigest;
-        if (exactLiveConfig && planRemoval(previousRef, options) !== "release") {
+        if (exactLiveConfig && planRemoval(previousRef, options).action !== "release") {
           throw new ClawMcpUpdateError(
             `MCP server ${JSON.stringify(name)} is no longer safely releasable.`,
           );
@@ -113,7 +116,7 @@ export async function applyClawMcpUpdate(
         if (!previousServer || !previousRef) {
           throw new ClawMcpUpdateError(`MCP server ${JSON.stringify(name)} disappeared.`);
         }
-        if (planRemoval(previousRef, options) !== "remove") {
+        if (planRemoval(previousRef, options).action !== "remove") {
           throw new ClawMcpUpdateError(
             `MCP server ${JSON.stringify(name)} gained another owner after planning.`,
           );
@@ -145,7 +148,9 @@ export async function applyClawMcpUpdate(
         agentId: updatePlan.agentId,
         name,
         configDigest: digestClawMcpServer(targetServer),
-        ownership: previousRef?.ownership ?? "claw-installed",
+        relationship: previousRef?.relationship ?? "managed",
+        origin: previousRef?.origin ?? "claw-introduced",
+        independentOwner: previousRef?.independentOwner ?? false,
         status: "complete",
         createdAtMs: previousRef?.createdAtMs ?? nowMs,
         updatedAtMs: nowMs,

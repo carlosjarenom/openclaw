@@ -13,7 +13,6 @@ import {
   CLAW_UPDATE_PLAN_SCHEMA_VERSION,
   type ClawUpdatePlan,
 } from "../claws/update-plan.js";
-import { getRuntimeConfig } from "../config/config.js";
 import { listConfiguredMcpServers } from "../config/mcp-config.js";
 import { defaultRuntime, writeRuntimeJson, type RuntimeEnv } from "../runtime.js";
 import { openExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db.js";
@@ -62,9 +61,9 @@ export async function runClawsUpdateCommand(
   runtime: RuntimeEnv = defaultRuntime,
 ): Promise<void> {
   assertExperimentalClawsEnabled();
-  if (!opts.dryRun && !opts.yes) {
+  if (!opts.dryRun && (!opts.yes || !opts.planIntegrity)) {
     const message =
-      "Claw update requires explicit consent; pass --dry-run to preview or --yes to apply supported actions.";
+      "Claw update requires explicit consent; pass --dry-run to preview or --yes with --plan-integrity to apply supported actions.";
     if (opts.json) {
       writeRuntimeJson(runtime, {
         schemaVersion: CLAW_UPDATE_PLAN_SCHEMA_VERSION,
@@ -79,8 +78,7 @@ export async function runClawsUpdateCommand(
     return;
   }
 
-  const config = getRuntimeConfig();
-  const listedMcpServers = await listConfiguredMcpServers({ config });
+  const listedMcpServers = await listConfiguredMcpServers();
   if (!listedMcpServers.ok) {
     if (opts.json) {
       writeRuntimeJson(runtime, {
@@ -105,6 +103,7 @@ export async function runClawsUpdateCommand(
     runtime.exit(1);
     return;
   }
+  const config = listedMcpServers.config;
 
   let source = opts.from;
   if (!source) {
@@ -208,6 +207,7 @@ export async function runClawsUpdateCommand(
       runtime.log(
         `Claw update plan: ${plan.currentClaw?.name ?? target} ${plan.currentClaw?.version ?? "unknown"} -> ${plan.targetClaw?.version ?? "unknown"}`,
       );
+      runtime.log(`Plan integrity: ${plan.planIntegrity}`);
       logClawUpdatePlanSummary(plan, runtime);
     }
     if (plan.blockers.length > 0 || plan.actions.some((action) => action.blocked)) {

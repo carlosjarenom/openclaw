@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { digestClawPackageRef } from "./package-update-provenance.js";
 import { applyClawPackageUpdate } from "./package-update.js";
 import { installClawPackages } from "./packages.js";
 import { CLAW_PACKAGE_REF_SCHEMA_VERSION, type PersistedClawPackageRef } from "./provenance.js";
@@ -16,7 +17,9 @@ function ref(kind: "skill" | "plugin", name: string, version: string): Persisted
     version,
     integrity: `sha256:${name}-${version}`,
     status: "complete",
-    ownership: "claw-installed",
+    relationship: kind === "skill" ? "managed" : "referenced",
+    origin: "claw-introduced",
+    independentOwner: false,
     installedAtMs: 10,
     updatedAtMs: 10,
   };
@@ -62,14 +65,12 @@ const manifest: ClawManifest = {
       source: "clawhub",
       ref: "triage",
       version: "2.0.0",
-      integrity: "sha256:triage-2.0.0",
     },
     {
       kind: "plugin",
       source: "clawhub",
       ref: "audit",
       version: "1.0.0",
-      integrity: "sha256:audit-1.0.0",
     },
   ],
   mcpServers: {},
@@ -113,7 +114,12 @@ const addPlan: ClawAddPlan = {
     id: `${pkg.kind}:${pkg.ref}`,
     action: "install",
     target: `clawhub:${pkg.ref}@${pkg.version}`,
-    details: pkg,
+    details: {
+      ...pkg,
+      integrity: `sha256:${pkg.ref}-${pkg.version}`,
+      ownerAction: "install",
+      ...(pkg.kind === "plugin" ? { installId: pkg.ref } : {}),
+    },
     blocked: false,
   })),
   blockers: [],
@@ -147,6 +153,7 @@ describe("applyClawPackageUpdate", () => {
           target: "clawhub:triage@2.0.0",
           blocked: false,
           reason: "changed",
+          currentDigest: digestClawPackageRef(oldSkill),
         },
         {
           kind: "package",
@@ -159,10 +166,11 @@ describe("applyClawPackageUpdate", () => {
         {
           kind: "package",
           id: "plugin:legacy",
-          action: "remove",
+          action: "release",
           target: "clawhub:legacy@1.0.0",
           blocked: false,
           reason: "removed",
+          currentDigest: digestClawPackageRef(legacy),
         },
       ]),
       manifest,
@@ -200,10 +208,11 @@ describe("applyClawPackageUpdate", () => {
         {
           kind: "package",
           id: "plugin:legacy",
-          action: "remove",
+          action: "release",
           target: "clawhub:legacy@1.0.0",
           blocked: false,
           reason: "removed",
+          currentDigest: digestClawPackageRef(legacy),
         },
       ]),
       { ...manifest, packages: [] },
@@ -214,6 +223,50 @@ describe("applyClawPackageUpdate", () => {
     await expect(execution.rollback()).resolves.toBeUndefined();
     expect(replaceExpected).toHaveBeenNthCalledWith(1, legacy, undefined, expect.any(Object));
     expect(replaceExpected).toHaveBeenNthCalledWith(2, undefined, legacy, expect.any(Object));
+  });
+
+  it("uninstalls managed packages before releasing their provenance", async () => {
+    const oldSkill = ref("skill", "triage", "1.0.0");
+    const replaceExpected = vi.fn();
+    const planRemovals = vi.fn(async () => [
+      {
+        packageRef: oldSkill,
+        workspace: "/tmp/worker",
+        action: "uninstall" as const,
+        blocked: false,
+        affectedClawAgentIds: [],
+      },
+    ]);
+    const applyRemovals = vi.fn(async () => [
+      { kind: "skill" as const, ref: "triage", version: "1.0.0", action: "uninstalled" as const },
+    ]);
+    const execution = await applyClawPackageUpdate(
+      plan([
+        {
+          kind: "package",
+          id: "skill:triage",
+          action: "remove",
+          target: "clawhub:triage@1.0.0",
+          blocked: false,
+          reason: "removed",
+          currentDigest: digestClawPackageRef(oldSkill),
+        },
+      ]),
+      { ...manifest, packages: [] },
+      { ...addPlan, actions: [] },
+      {
+        readRefs: () => [oldSkill],
+        readInstall: vi.fn(() => ({ workspace: "/tmp/worker" }) as never),
+        planRemovals,
+        applyRemovals,
+        replaceExpected,
+      },
+    );
+
+    expect(planRemovals).toHaveBeenCalledOnce();
+    expect(applyRemovals).toHaveBeenCalledOnce();
+    expect(replaceExpected).toHaveBeenCalledWith(oldSkill, undefined, expect.any(Object));
+    await expect(execution.rollback()).rejects.toMatchObject({ partial: true });
   });
 
   it("does not replace a shared plugin pinned by another Claw", async () => {
@@ -240,6 +293,32 @@ describe("applyClawPackageUpdate", () => {
       ),
     ).rejects.toMatchObject({ partial: false });
     expect(installPackages).not.toHaveBeenCalled();
+  });
+
+  it("rejects release when package provenance changed after planning", async () => {
+    const planned = ref("plugin", "legacy", "1.0.0");
+    const observed = { ...planned, independentOwner: true };
+    const replaceExpected = vi.fn();
+
+    await expect(
+      applyClawPackageUpdate(
+        plan([
+          {
+            kind: "package",
+            id: "plugin:legacy",
+            action: "release",
+            target: "clawhub:legacy@1.0.0",
+            blocked: false,
+            reason: "released",
+            currentDigest: digestClawPackageRef(planned),
+          },
+        ]),
+        { ...manifest, packages: [] },
+        { ...addPlan, actions: [] },
+        { readRefs: () => [observed], replaceExpected },
+      ),
+    ).rejects.toMatchObject({ partial: false });
+    expect(replaceExpected).not.toHaveBeenCalled();
   });
 
   it("allows only the expected prior version conflict for an owned plugin upgrade", async () => {

@@ -1,7 +1,6 @@
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { applyClawMcpUpdate } from "./mcp-update.js";
@@ -25,6 +24,7 @@ const remote: ClawMcpServer = {
 };
 
 afterEach(() => closeOpenClawStateDatabaseForTest());
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 function ref(name: string, server: ClawMcpServer): PersistedClawMcpServerRef {
   return {
@@ -32,7 +32,9 @@ function ref(name: string, server: ClawMcpServer): PersistedClawMcpServerRef {
     agentId: "worker",
     name,
     configDigest: digestClawMcpServer(server),
-    ownership: "claw-installed",
+    relationship: "managed",
+    origin: "claw-introduced",
+    independentOwner: false,
     status: "complete",
     createdAtMs: 10,
     updatedAtMs: 10,
@@ -133,7 +135,7 @@ describe("applyClawMcpUpdate", () => {
         sourceMcpServers: { docs: oldDocs, legacy },
         nowMs: 20,
         readRefs: () => currentRefs,
-        planRemoval: () => "remove",
+        planRemoval: () => ({ action: "remove" }),
         setServer,
         unsetServer,
         upsertRef,
@@ -175,7 +177,12 @@ describe("applyClawMcpUpdate", () => {
   });
 
   it("releases ownership without removing shared or independently owned config", async () => {
-    const independent = { ...ref("legacy", legacy), ownership: "independently-owned" as const };
+    const independent = {
+      ...ref("legacy", legacy),
+      relationship: "referenced" as const,
+      origin: "pre-existing" as const,
+      independentOwner: true,
+    };
     const unsetServer = vi.fn();
     const upsertRef = vi.fn();
     const deleteRef = vi.fn();
@@ -195,7 +202,7 @@ describe("applyClawMcpUpdate", () => {
         config: { mcp: { servers: { legacy } } },
         sourceMcpServers: { legacy },
         readRefs: () => [independent],
-        planRemoval: () => "release",
+        planRemoval: () => ({ action: "release" }),
         unsetServer,
         upsertRef,
         deleteRef,
@@ -228,7 +235,7 @@ describe("applyClawMcpUpdate", () => {
           config: { mcp: { servers: { legacy } } },
           sourceMcpServers: { legacy },
           readRefs: () => [previous],
-          planRemoval: () => "remove",
+          planRemoval: () => ({ action: "remove" }),
           deleteRef,
         },
       ),
@@ -237,9 +244,14 @@ describe("applyClawMcpUpdate", () => {
   });
 
   it("restores complete MCP ownership through a real release rollback", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openclaw-mcp-release-"));
+    const root = tempDirs.make("openclaw-mcp-release-");
     const stateOptions = { env: { OPENCLAW_STATE_DIR: join(root, "state") } };
-    const independent = { ...ref("legacy", legacy), ownership: "independently-owned" as const };
+    const independent = {
+      ...ref("legacy", legacy),
+      relationship: "referenced" as const,
+      origin: "pre-existing" as const,
+      independentOwner: true,
+    };
     upsertClawMcpServerRef(independent, stateOptions);
 
     const execution = await applyClawMcpUpdate(

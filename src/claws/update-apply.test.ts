@@ -281,6 +281,41 @@ describe("applyClawUpdatePlan", () => {
     expect(commits).toBe(2);
   });
 
+  it("does not recreate an agent removed after planning", async () => {
+    const currentAgent = { id: "worker", name: "Worker" };
+    const currentDigest = `sha256:${createHash("sha256").update(stableStringify(currentAgent)).digest("hex")}`;
+    const updatePlan = plan([
+      {
+        kind: "agent",
+        id: "worker",
+        action: "change",
+        target: "agents.list.worker",
+        blocked: false,
+        reason: "target changed",
+        currentDigest,
+      },
+    ]);
+    let config: OpenClawConfig = { agents: { list: [] } };
+
+    await expect(
+      applyClawUpdatePlan(
+        updatePlan,
+        { targetManifest: manifest, targetSource: source },
+        {
+          config,
+          ...consent(updatePlan),
+          rebuildPlan: vi.fn(async () => updatePlan),
+          buildAddPlan: vi.fn(async () => addPlan),
+          readInstall: vi.fn(() => install),
+          commitConfig: async (transform) => {
+            config = transform(config);
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "agent_changed" });
+    expect(config.agents?.list).toEqual([]);
+  });
+
   it("rejects a stale or manually blocked plan", async () => {
     const updatePlan = plan([]);
     const changed = { ...updatePlan, targetClaw: { ...updatePlan.targetClaw!, version: "3.0.0" } };

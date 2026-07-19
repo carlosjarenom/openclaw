@@ -158,9 +158,9 @@ export async function applyClawUpdatePlan(
     context: {
       agentId: fresh.agentId,
       workspace: currentInstall.workspace,
-      packagePreflight: async (pkg) => {
+      packagePreflight: async (pkg, workspace) => {
         const preflight = options.packagePreflight
-          ? await options.packagePreflight(pkg)
+          ? await options.packagePreflight(pkg, workspace)
           : {
               ok: false,
               code: "package_install_unavailable",
@@ -347,7 +347,13 @@ export async function applyClawUpdatePlan(
         const index = agents.findIndex((agent) => agent.id === fresh.agentId);
         const current = index >= 0 ? agents[index] : undefined;
         previousAgent = current;
-        if (current && agentAction.currentDigest !== undefined) {
+        if (agentAction.currentDigest !== undefined) {
+          if (!current) {
+            throw new ClawUpdateMutationError(
+              "agent_changed",
+              "The owned agent entry disappeared during update.",
+            );
+          }
           const liveDigest = `sha256:${createHash("sha256").update(stableStringify(current)).digest("hex")}`;
           if (liveDigest !== agentAction.currentDigest) {
             throw new ClawUpdateMutationError(

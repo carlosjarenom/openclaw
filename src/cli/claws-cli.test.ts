@@ -836,6 +836,18 @@ describe("claws cli", () => {
     expect(mocks.runtime.exit).toHaveBeenCalledWith(1);
   });
 
+  it("requires exact plan integrity with update consent", async () => {
+    const { root } = await writePackage();
+
+    await runCli(["claws", "update", "demo-agent", "--from", root, "--yes", "--json"]);
+
+    expect(mocks.buildClawUpdatePlan).not.toHaveBeenCalled();
+    expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
+      error: { code: "consent_required" },
+    });
+    expect(mocks.runtime.exit).toHaveBeenCalledWith(1);
+  });
+
   it("applies a supported update only after explicit consent", async () => {
     const { root } = await writePackage();
 
