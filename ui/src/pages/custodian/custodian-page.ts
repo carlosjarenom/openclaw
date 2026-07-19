@@ -498,6 +498,8 @@ export class CustodianPage extends OpenClawLightDomElement {
       message,
     });
     if (questionReply && scopeKey === this.sessionScopeKey) {
+      // Failed user turns have no safe Retry path. Keep the wizard guarded until
+      // a later successful turn or a session reset proves it advanced.
       this.questionReplyUncertain = !sent;
     }
     return sent;

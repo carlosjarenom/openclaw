@@ -549,6 +549,7 @@ describe("custodian page nudges", () => {
 
     await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
     await waitForFast(() => expect(page.querySelector('[role="alert"]')).not.toBeNull());
+    expect(page.querySelector('[role="alert"] button')).toBeNull();
     const action = page.querySelector<HTMLButtonElement>(".custodian__nudge-action")!;
     expect(action.disabled).toBe(true);
     action.click();
