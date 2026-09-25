@@ -24,6 +24,14 @@ describe("resolveQueueSettingsCore", () => {
       params: { cfg: { messages: { queue: { mode: "steer-backlog" as never } } } },
       mode: "steer",
     },
+    {
+      name: "plugin channel override",
+      params: {
+        cfg: { messages: { queue: { mode: "steer", byChannel: { buzz: "collect" } } } },
+        channel: "buzz",
+      },
+      mode: "collect",
+    },
   ] as const)("resolves $name with the built-in batching defaults", ({ params, mode }) => {
     expect(resolveQueueSettingsCore(params)).toEqual({
       mode,
