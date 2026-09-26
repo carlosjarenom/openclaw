@@ -17,6 +17,7 @@ import {
   findTranscriptEventMock,
   listedRequesterRuns,
   wakeParams,
+  drainRestarts,
 } from "./subagent-announce.requester-settle-fixture.test-support.js";
 import {
   REQUESTER,
@@ -26,6 +27,7 @@ import {
   transitionBatchSpy,
   completeBatchSpy,
   deliveredCallArg,
+  exhaustedAttemptOutcome,
 } from "./subagent-announce.requester-settle-wake.test-support.js";
 
 const { maybeWakeRequesterAfterAllChildrenSettled } =
@@ -757,6 +759,14 @@ describe("maybeWakeRequesterAfterAllChildrenSettled", () => {
   });
 
   describe("restart-persistent outbox", () => {
+    it("exhausts a batch stuck dispatching at the attempt cap", async () => {
+      const wakes = await drainRestarts(maybeWakeRequesterAfterAllChildrenSettled, wakeParams);
+      expect(wakes).toEqual([false, false, false]);
+      expect(deliverSpy.mock.calls.map(([arg]) => arg.directIdempotencyKey)).toEqual([]);
+      expect(completeBatchSpy.mock.lastCall?.slice(0, 2)).toEqual([["run-a", "run-b"], undefined]);
+      expect(completeBatchSpy.mock.lastCall?.[2]).toEqual(exhaustedAttemptOutcome);
+    });
+
     it("keeps active overlap pending and only caps a stale settle blocker", async () => {
       const child = makeSettledChild({
         runId: "run-a",
