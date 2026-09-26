@@ -58,7 +58,8 @@ export async function createSessionEntryWithTranscriptInWorker<TError>(
     if (!snapshot) {
       throw new Error("Session creation lost its initialized database");
     }
-    const { normalizedKey, legacyKeys, labels, databaseIdentity, ...context } = snapshot;
+    const { normalizedKey, legacyKeys, labels, databaseIdentity, databasePath, ...context } =
+      snapshot;
     const assertDatabaseCurrent = () => {
       reader.assertCurrent();
       assertExistingDatabaseIdentity(scope.path, `file:${databaseIdentity}`);
@@ -70,7 +71,7 @@ export async function createSessionEntryWithTranscriptInWorker<TError>(
         agentId: scope.agentId,
         sessionKey: normalizedKey,
         file: {
-          path: scope.path,
+          path: databasePath,
           agentId: databaseOptions.agentId,
           databaseIdentity,
           assertCurrent: assertDatabaseCurrent,
@@ -85,6 +86,7 @@ export async function createSessionEntryWithTranscriptInWorker<TError>(
                 runWithSessionEntryCreationPublication(operation, () => run(assertCurrent)),
               )
           : undefined;
+        options.onPhase?.("entry");
         const created = await createEntry({
           ...context,
           isLabelInUse: (label) => labels.has(label),
@@ -97,36 +99,15 @@ export async function createSessionEntryWithTranscriptInWorker<TError>(
           assertDatabaseCurrent();
           options.commitGuard?.();
         };
-        const initialize = async (assertSourceCurrent?: () => void) => {
-          const assertHeld = () => {
-            assertCurrent();
-            assertSourceCurrent?.();
-          };
-          try {
-            await initializeSessionTranscriptInWorker(
-              databaseOptions,
-              databaseIdentity,
-              {
-                sessionKey: normalizedKey,
-                sessionId: created.entry.sessionId,
-                cwd: options.cwd,
-              },
-              assertHeld,
-            );
-          } catch (error) {
-            if (hasSqliteWorkerOutcomeUnknown(error)) {
-              throw error;
-            }
-            assertHeld();
-            return formatErrorMessage(error);
-          }
-          return undefined;
+        let pendingArchiveRecovery = false;
+        const onLifecycleCommitted = (pending: boolean) => {
+          pendingArchiveRecovery = pending;
+          options.onLifecycleCommitted?.(created.entry);
         };
-        const transcriptError = withCommit ? await withCommit(initialize) : await initialize();
-        if (transcriptError !== undefined) {
-          return { ok: false, error: transcriptError, phase: "transcript" };
-        }
         const publishArchives = async () => {
+          if (!pendingArchiveRecovery) {
+            return;
+          }
           // Match lifecycle adoption recovery, after registration and writer release.
           // The archive owner retains batching, byte validation, events and failure semantics.
           const run = <T>(
@@ -169,6 +150,36 @@ export async function createSessionEntryWithTranscriptInWorker<TError>(
           });
         };
         if (legacyKeys.length > 0) {
+          const initialize = async (assertSourceCurrent?: () => void) => {
+            const assertHeld = () => {
+              assertCurrent();
+              assertSourceCurrent?.();
+            };
+            try {
+              await initializeSessionTranscriptInWorker(
+                databaseOptions,
+                databaseIdentity,
+                {
+                  sessionKey: normalizedKey,
+                  sessionId: created.entry.sessionId,
+                  cwd: options.cwd,
+                },
+                assertHeld,
+              );
+            } catch (error) {
+              if (hasSqliteWorkerOutcomeUnknown(error)) {
+                throw error;
+              }
+              assertHeld();
+              return formatErrorMessage(error);
+            }
+            return undefined;
+          };
+          options.onPhase?.("transcript");
+          const transcriptError = withCommit ? await withCommit(initialize) : await initialize();
+          if (transcriptError !== undefined) {
+            return { ok: false, error: transcriptError, phase: "transcript" };
+          }
           // Admitted folded aliases still belong to canonical replacement: it owns
           // their row CAS, native deletion preparation, and atomic artifact rehoming.
           await applySessionEntryCanonicalReplacements({
@@ -179,9 +190,8 @@ export async function createSessionEntryWithTranscriptInWorker<TError>(
             assertCommitAllowed: assertCurrent,
             withCommit,
             ownerAssignment: owner ? { sessionKey: normalizedKey, owner } : undefined,
-            onLifecycleCommitted: options.onLifecycleCommitted
-              ? () => options.onLifecycleCommitted!(created.entry)
-              : undefined,
+            onLifecycleCommitted,
+            checkPendingArchiveRecovery: true,
             afterCommitted: options.afterCommitted
               ? (_result, source) => options.afterCommitted!(created.entry, source)
               : undefined,
@@ -199,11 +209,12 @@ export async function createSessionEntryWithTranscriptInWorker<TError>(
           await publishArchives();
           return { ok: true, entry: created.entry, sessionFile: normalizedKey };
         }
-        let adopted = false;
+        options.onPhase?.("writerAdmission");
         const commit = (assertSourceCurrent?: () => void) =>
           runExclusiveSqliteSessionWrite(
             scope,
             async () => {
+              options.onPhase?.("commit");
               const assertHeld = () => {
                 assertCurrent();
                 assertSourceCurrent?.();
@@ -221,41 +232,54 @@ export async function createSessionEntryWithTranscriptInWorker<TError>(
               if (!replacement || replacement.databaseIdentity !== databaseIdentity) {
                 throw new Error("Session creation database changed before entry commit");
               }
-              adopted = replacement.expectedRows.has(normalizedKey);
               // Creation owns its canonical target, including hidden run-owned nodes. The
               // canonical-replacement projection deliberately does not admit those nodes.
-              await commitSessionEntryReplacementsInWorker(
-                databaseOptions,
-                databaseIdentity,
-                {
-                  expectedRows: replacement.expectedRows,
-                  labelOwnerKeys: replacement.labelOwnerKeys,
-                  validationKeys: [normalizedKey],
-                  replacements: [{ sessionKey: normalizedKey, entry: created.entry }],
-                  ...(owner ? { ownerAssignment: { sessionKey: normalizedKey, owner } } : {}),
-                },
-                assertHeld,
-                {
-                  identityAgentId: scope.agentId,
-                  afterCommitted: options.afterCommitted
-                    ? (source) => options.afterCommitted!(created.entry, source)
-                    : undefined,
-                  onLifecycleCommitted: options.onLifecycleCommitted
-                    ? () => options.onLifecycleCommitted!(created.entry)
-                    : undefined,
-                },
-              );
+              try {
+                await commitSessionEntryReplacementsInWorker(
+                  databaseOptions,
+                  databaseIdentity,
+                  {
+                    expectedRows: replacement.expectedRows,
+                    labelOwnerKeys: replacement.labelOwnerKeys,
+                    validationKeys: [normalizedKey],
+                    replacements: [{ sessionKey: normalizedKey, entry: created.entry }],
+                    checkPendingArchiveRecovery: true,
+                    initializeTranscript: {
+                      sessionKey: normalizedKey,
+                      sessionId: created.entry.sessionId,
+                      cwd: options.cwd,
+                    },
+                    ...(owner ? { ownerAssignment: { sessionKey: normalizedKey, owner } } : {}),
+                  },
+                  assertHeld,
+                  {
+                    identityAgentId: scope.agentId,
+                    afterCommitted: options.afterCommitted
+                      ? (source) => options.afterCommitted!(created.entry, source)
+                      : undefined,
+                    onLifecycleCommitted,
+                  },
+                );
+              } catch (error) {
+                if (
+                  !hasSqliteWorkerOutcomeUnknown(error) &&
+                  error instanceof Error &&
+                  error.name === "SessionTranscriptInitializationError"
+                ) {
+                  assertHeld();
+                  return error.message;
+                }
+                throw error;
+              }
+              return undefined;
             },
             "session.entry.create-with-transcript",
           );
-        if (withCommit) {
-          await withCommit(commit);
-        } else {
-          await commit();
+        const transcriptError = withCommit ? await withCommit(commit) : await commit();
+        if (transcriptError !== undefined) {
+          return { ok: false, error: transcriptError, phase: "transcript" };
         }
-        if (adopted) {
-          await publishArchives();
-        }
+        await publishArchives();
         return { ok: true, entry: created.entry, sessionFile: normalizedKey };
       },
     );

@@ -7,7 +7,7 @@ import type { SessionTranscriptInitializationPublication } from "../config/sessi
 import type {
   SessionEntryReplacementCommit,
   SessionEntryReplacementCommitted,
-} from "../config/sessions/session-accessor.sqlite-replacement-state.js";
+} from "../config/sessions/session-accessor.sqlite-replacement-types.js";
 import type {
   PublishedSessionTranscriptArchive,
   SessionLegacyArchiveRemovalResult,
@@ -69,7 +69,9 @@ export type AgentDatabaseOperations = AgentDatabaseDomainOperations & {
   "database.prepareWrite": { input: undefined; output: void };
   "session.entry.read": { input: { sessionKey: string }; output: SessionEntry | undefined };
   "session.entries.replace": {
-    input: SessionEntryReplacementCommit;
+    input: SessionEntryReplacementCommit & {
+      initializeTranscript?: { sessionKey: string; sessionId: string; cwd?: string };
+    };
     output: SessionEntryReplacementCommitted;
   };
   "session.providerReview.compare": {
