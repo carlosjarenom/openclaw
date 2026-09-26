@@ -14,6 +14,7 @@ import { prepareTerminalWithSettledTurnFinalization } from "../src/agents/embedd
 import { createSettledFinalizationTestInput } from "../src/agents/embedded-agent-runner/run/settled-turn-finalization.test-support.js";
 import { isEmbeddedRunTerminalTimeout } from "../src/agents/embedded-agent-runner/run/terminal-outcome.js";
 import { resolveEmbeddedRunTerminalTimeout } from "../src/agents/embedded-agent-runner/run/terminal-timeout.js";
+import { SILENT_REPLY_TOKEN } from "../src/auto-reply/tokens.js";
 
 const { createCodexSettledFinalizerTestFixture, registerCodexEventProjectorTestLifecycle } =
   await loadCodexSettledFinalizerTestFixture();
@@ -103,25 +104,29 @@ describe("registered Codex finalizer host silence contract", () => {
   });
 
   it.each([
-    { text: "NO_REPLY", expectation: "required" },
-    { text: " ", expectation: "optional" },
-  ] as const)("distinguishes $expectation $text output", async ({ text, expectation }) => {
-    const input = await createInput();
-    input.terminalBase.runParams.terminalReplyExpectation = expectation;
-    input.terminalBase.runParams.allowEmptyAssistantReplyAsSilent = true;
-    returnBoundedText(text);
+    { text: "no_reply", expectation: "optional", authored: true },
+    { text: "NO_REPLY", expectation: "required", authored: false },
+    { text: " ", expectation: "optional", authored: false },
+    { text: " ", expectation: "required", authored: false },
+  ] as const)(
+    "distinguishes $expectation $text output",
+    async ({ text, expectation, authored }) => {
+      const input = await createInput();
+      input.terminalBase.runParams.terminalReplyExpectation = expectation;
+      input.terminalBase.runParams.allowEmptyAssistantReplyAsSilent = true;
+      returnBoundedText(text);
 
-    const result = await prepareTerminalWithSettledTurnFinalization(input);
+      const result = await prepareTerminalWithSettledTurnFinalization(input);
 
-    expect(fixture.runBounded).toHaveBeenCalledTimes(2);
-    expect(result.finalizationOutcome).toBe("completed-empty");
-    expect(result.prepared.payloadsWithToolMedia).toEqual([
-      expect.objectContaining({
-        text: "The tool run finished, but no final summary was produced. I did not repeat any completed actions.",
-      }),
-    ]);
-    expect(fixture.mirror).not.toHaveBeenCalled();
-  });
+      // This suite runs on a heartbeat trigger, so an exhausted finalizer never
+      // materializes the visible host placeholder, required reply or not.
+      expect(fixture.runBounded).toHaveBeenCalledTimes(authored ? 1 : 2);
+      expect(result.finalizationOutcome).toBe(authored ? "answered" : "silent-fallback");
+      expect(result.attempt.assistantTexts).toEqual([authored ? text : SILENT_REPLY_TOKEN]);
+      expect(result.prepared.payloadsWithToolMedia ?? []).toEqual([]);
+      expect(fixture.mirror).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([{ failedTool: true }, { timedOut: true }])(
     "does not hide an original failure with authored silence: %j",
