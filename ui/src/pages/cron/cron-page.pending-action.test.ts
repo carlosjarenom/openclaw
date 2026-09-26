@@ -42,7 +42,7 @@ describe("CronPage pending action labels", () => {
     return { page, reply, job };
   }
 
-  async function selectJob(page: ReturnType<typeof createPage>["page"]) {
+  async function selectJob(page: ReturnType<typeof createPage>) {
     await waitForCronPage(() =>
       expect(page.querySelector('[data-test-id="cron-row-job-1"]')).not.toBeNull(),
     );
@@ -52,12 +52,12 @@ describe("CronPage pending action labels", () => {
     await waitForCronPage(() => expect(page.querySelector("#cron-name")).not.toBeNull());
   }
 
-  async function waitForPending(page: ReturnType<typeof createPage>["page"]) {
+  async function waitForPending(page: ReturnType<typeof createPage>) {
     await waitForCronPage(() => expect(page.cron.cronBusy).toBe(true));
     await page.updateComplete;
   }
 
-  function labels(page: ReturnType<typeof createPage>["page"]) {
+  function labels(page: ReturnType<typeof createPage>) {
     return {
       submit: page.querySelector('[data-test-id="cron-submit"]')?.textContent ?? "",
       submitDisabled: (page.querySelector('[data-test-id="cron-submit"]') as HTMLButtonElement)
