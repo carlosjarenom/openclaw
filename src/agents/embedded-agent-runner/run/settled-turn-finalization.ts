@@ -25,7 +25,7 @@ import type {
   AgentHarness,
   AgentHarnessSettledTurnFinalizationResult,
 } from "../../harness/types.js";
-import { observeReplyDelivery } from "../../reply-completion.js";
+import { observeReplyDelivery, resolveReplyExpectation } from "../../reply-completion.js";
 import { resolveAgentRunSessionTarget } from "../../run-session-target.js";
 import { resolveAgentTimeoutMs } from "../../timeout.js";
 import {
@@ -265,9 +265,19 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
     return preserveInitial("failed");
   }
   if (finalizationOutcome !== "answered" && terminalFallbackAllowed) {
-    // Scheduled runs have no useful announcement when only a host placeholder remains.
-    const fallbackText =
-      runParams.trigger === "cron" ? SILENT_REPLY_TOKEN : SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT;
+    // Unattended runs have no useful announcement when only a host placeholder remains.
+    // A heartbeat whose reply the input owner required is not unattended noise: emitting
+    // NO_REPLY and marking the outcome silent would drop a reply the caller asked for, so
+    // only a heartbeat that resolves as optional is silenced. The shared resolver is the
+    // single source of that requiredness because legacy callers pass no
+    // terminalReplyExpectation at all and only the resolver recovers the intent. Cron has
+    // no required-reply escape hatch and stays silenced whatever the expectation resolves to.
+    const unattendedRun =
+      runParams.trigger === "cron" ||
+      (runParams.trigger === "heartbeat" && resolveReplyExpectation(runParams) === "optional");
+    const fallbackText = unattendedRun
+      ? SILENT_REPLY_TOKEN
+      : SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT;
     attempt = buildSettledToolFallbackAttemptResult({
       text: fallbackText,
       error: terminalFailed
@@ -300,7 +310,7 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
     }
     if (terminalFailed) {
       finalizationOutcome = "failed";
-    } else if (runParams.trigger === "cron") {
+    } else if (unattendedRun) {
       finalizationOutcome = "silent-fallback";
     }
   }
