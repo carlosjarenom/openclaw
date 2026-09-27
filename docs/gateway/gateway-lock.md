@@ -37,7 +37,7 @@ During startup or restart, the Gateway waits up to five minutes for another Open
 - A live owner blocks another startup before either process binds its port. If the wait expires, startup reports:
 
   ```text
-  GatewayLockError("failed to acquire gateway state ownership; waited <ms>ms for Gateway state ownership")
+  GatewayLockError("failed to acquire gateway state ownership; waited <ms>ms for Gateway state ownership at <lockPath>")
   ```
 
 ### Socket bind
