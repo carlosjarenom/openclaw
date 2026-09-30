@@ -116,4 +116,35 @@ describe("paired-node thinking env forwarding", () => {
     expect(invocation.env?.MAX_THINKING_TOKENS).toBe("0");
     expect(invocation.env).not.toHaveProperty("CLAUDE_CODE_SOME_UNRELATED_KEY");
   });
+
+  it("leaves the thinking keys unnamed when the run resolves no thinking value", async () => {
+    const invokeNode = installNodeInvokeMock();
+    const context = buildPreparedCliRunContext({
+      preparedEnv: { CLAUDE_CODE_OTHER_SETTING: "1" },
+      backend: {
+        clearEnv: [
+          "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING",
+          "MAX_THINKING_TOKENS",
+          "CLAUDE_CODE_OTHER_SETTING",
+        ],
+      },
+      sessionEntry: {
+        sessionId: "openclaw-session",
+        updatedAt: 1,
+        execHost: "node",
+        execNode: "node-a",
+      },
+    });
+
+    await expect(executePreparedCliRun(context)).resolves.toMatchObject({ text: "ok" });
+
+    // A paired node that predates the thinking keys rejects any request naming
+    // one as INVALID_REQUEST, so a run that resolved no thinking value must keep
+    // the prior request shape instead of clearing keys it never set.
+    const invocation = nodeInvocation(invokeNode);
+    expect(invocation.env).not.toHaveProperty("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING");
+    expect(invocation.env).not.toHaveProperty("MAX_THINKING_TOKENS");
+    expect(invocation.clearEnv).not.toContain("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING");
+    expect(invocation.clearEnv).not.toContain("MAX_THINKING_TOKENS");
+  });
 });

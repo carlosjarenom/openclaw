@@ -238,6 +238,7 @@ describe("Claude CLI node command", () => {
     // Without them in both allowlists the node answers INVALID_REQUEST before
     // Claude Code starts, which a mocked node invocation never surfaces.
     const thinkingCwd = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-node-claude-think-"));
+    tempDirs.push(thinkingCwd);
     await expect(
       decodeClaudeCliNodeRunParams(
         JSON.stringify({
