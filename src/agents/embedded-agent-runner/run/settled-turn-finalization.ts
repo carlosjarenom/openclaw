@@ -264,7 +264,12 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
   }
   if (finalizationOutcome !== "answered" && terminalFallbackAllowed) {
     // Unattended runs have no useful announcement when only a host placeholder remains.
-    const unattendedRun = UNATTENDED_RUN_TRIGGERS.has(runParams.trigger);
+    // A heartbeat the host explicitly required is not unattended noise: emitting
+    // NO_REPLY and marking the outcome silent would drop a reply the caller asked
+    // for, so the required path keeps the visible placeholder instead.
+    const unattendedRun =
+      UNATTENDED_RUN_TRIGGERS.has(runParams.trigger) &&
+      runParams.terminalReplyExpectation !== "required";
     const fallbackText = unattendedRun
       ? SILENT_REPLY_TOKEN
       : SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT;
