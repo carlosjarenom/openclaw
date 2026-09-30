@@ -146,6 +146,7 @@ export function createInitialCronState<Row = CronJob>(
     cronRunsSortDir: "desc",
     cronBusy: false,
     cronPendingAction: null,
+    cronPendingRunJobId: null,
   };
 }
 
@@ -392,6 +393,9 @@ async function withCronBusy(
   // The lock is shared by every mutation, so publish the identity alongside it
   // and release both from the same finally.
   state.cronPendingAction = action;
+  // Only a run belongs to a specific automation. A save or toggle is scoped to
+  // the form, so it must not claim the selected job in the view.
+  state.cronPendingRunJobId = action === "run" ? (job?.id ?? null) : null;
   state.cronError = null;
   try {
     await run(client, reportFeedback);
@@ -401,6 +405,7 @@ async function withCronBusy(
     retireCronStatusFeedback(state);
     state.cronBusy = false;
     state.cronPendingAction = null;
+    state.cronPendingRunJobId = null;
   }
 }
 
@@ -905,6 +910,7 @@ export async function runCronJob(state: CronState, jobId: string, mode: "force" 
       // the history refresh below still holds the mutation lock. Otherwise a
       // slow cron.runs read leaves Run claiming the run has not begun.
       state.cronPendingAction = null;
+      state.cronPendingRunJobId = null;
       // The enclosing chain only repaints when every step finishes, which for a
       // run is after the history refresh. Publish this settle so the idle label
       // lands with the request instead of trailing it.

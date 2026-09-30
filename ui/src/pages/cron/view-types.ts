@@ -46,6 +46,8 @@ export type CronProps = {
   busy: boolean;
   /** Which mutation holds the lock, so a control only announces its own work. */
   pendingAction: CronPendingAction | null;
+  /** The automation a pending run was started from, so another one stays idle. */
+  pendingRunJobId: string | null;
   form: CronFormState;
   heartbeatScratch: string;
   fieldErrors: CronFieldErrors;

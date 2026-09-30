@@ -157,4 +157,10 @@ export type CronState<Row = CronJob> = CronJobsState<Row> & {
   cronBusy: boolean;
   /** Identity of the mutation holding the lock, or null when it is free. */
   cronPendingAction: CronPendingAction | null;
+  /**
+   * The automation the pending run was started from. The lock is page-wide, so
+   * selecting another automation mid-request must not make that one look like
+   * its own run is starting.
+   */
+  cronPendingRunJobId: string | null;
 };

@@ -171,6 +171,55 @@ describe("CronPage pending action labels", () => {
     }
   });
 
+  it("keeps another automation's run label idle while a run is held elsewhere", async () => {
+    // Row selection has no busy guard, so selecting a second automation while a
+    // run is in flight is ordinary clicking. The lock is page-wide, so the label
+    // has to be scoped to the automation that was actually started.
+    const started = createCronViewJob("job-1", { name: "Nightly digest" });
+    const other = createCronViewJob("job-2", { name: "Weekly report" });
+    const reply = createDeferred<unknown>();
+    const fallback = createRequest();
+    const request = vi.fn(async (requestMethod: string) => {
+      if (requestMethod === "cron.list") {
+        return cronListResponse([started, other]);
+      }
+      if (requestMethod === "cron.run") {
+        return reply.promise;
+      }
+      return fallback(requestMethod);
+    });
+    const gateway = createGateway({ request } as unknown as GatewayBrowserClient, true);
+    gateway.emitSnapshot({ hello: operatorHello(["operator.admin"]) });
+    const page = createPage(createContext(gateway), { render: true });
+    try {
+      await waitForCronPage(() =>
+        expect(page.querySelector('[data-test-id="cron-row-job-1"]')).not.toBeNull(),
+      );
+      // Start the run from the list row, which is the path that leaves a
+      // different automation selected behind it.
+      (page.querySelector('[data-test-id="cron-row-run-job-1"]') as HTMLButtonElement).click();
+      await waitForPending(page);
+      expect(page.cron.cronPendingRunJobId).toBe("job-1");
+
+      // Now select the other automation while that run is still held.
+      (
+        page.querySelector('[data-test-id="cron-row-job-2"] .cron-table__name') as HTMLButtonElement
+      ).click();
+      await waitForCronPage(() => expect(page.querySelector("#cron-name")).not.toBeNull());
+      await page.updateComplete;
+      const switched = labels(page);
+      // Disabled, because the shared lock is genuinely held...
+      expect(switched.runNowDisabled).toBe(true);
+      // ...but idle, because nothing was started for this automation.
+      expect(switched.runNow).toContain("Run now");
+      expect(switched.runNow).not.toContain("Starting");
+    } finally {
+      reply.resolve({ ok: true, ran: true });
+      await page.updateComplete;
+      page.remove();
+    }
+  });
+
   it("keeps an untouched save idle while a remove holds the lock", async () => {
     const { page, reply, job } = createPendingPage("cron.remove");
     try {

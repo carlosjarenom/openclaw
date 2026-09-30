@@ -683,6 +683,7 @@ class CronPage extends OpenClawLightDomElement {
             this.modelSuggestionsError,
           busy: this.cron.cronBusy,
           pendingAction: this.cron.cronPendingAction,
+          pendingRunJobId: this.cron.cronPendingRunJobId,
           form: this.cron.cronForm,
           heartbeatScratch: canManage ? this.heartbeatScratch : "",
           channels: channels.channelsSnapshot?.channelMeta?.length

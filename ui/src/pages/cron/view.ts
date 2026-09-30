@@ -851,7 +851,7 @@ function renderDetailHeader(props: CronProps, mode: CronPanelMode, selectedJob?:
                 >
                   ${icon("play")}
                   ${
-                    props.pendingAction === "run"
+                    props.pendingAction === "run" && props.pendingRunJobId === selectedJob.id
                       ? t("cron.actions.runNowStarting")
                       : t("cron.actions.runNow")
                   }

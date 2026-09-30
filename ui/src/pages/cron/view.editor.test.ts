@@ -701,6 +701,7 @@ describe("cron view editor", () => {
       editingJob: job,
       busy: true,
       pendingAction: "run",
+      pendingRunJobId: "job-1",
     });
 
     const submit = getElement(container, '[data-test-id="cron-submit"]', HTMLButtonElement);
@@ -713,6 +714,28 @@ describe("cron view editor", () => {
     expect(submit.textContent).toContain("Save changes");
     expect(submit.textContent).not.toContain("Saving");
     expect(runNow.textContent).toContain("Starting");
+  });
+
+  it("keeps the run label idle for an automation that was not the one started", () => {
+    // The lock is page-wide, so a run held on one automation does not make a
+    // different automation look like its own run is starting. Row selection has
+    // no busy guard, so this is reachable by ordinary clicking.
+    const started = createJob("job-1", { name: "Nightly digest" });
+    const other = createJob("job-2", { name: "Weekly report" });
+    const container = renderView({
+      jobs: [started, other],
+      editingJob: other,
+      busy: true,
+      pendingAction: "run",
+      pendingRunJobId: started.id,
+    });
+
+    const runNow = getElement(container, '[data-test-id="cron-run-now"]', HTMLButtonElement);
+    // Still disabled, because the shared lock is genuinely held...
+    expect(runNow.disabled).toBe(true);
+    // ...but idle, because nothing was started for this automation.
+    expect(runNow.textContent).toContain("Run now");
+    expect(runNow.textContent).not.toContain("Starting");
   });
 
   it("shows run history instead of the editor on the history tab", () => {
