@@ -1,7 +1,6 @@
 // Tests that an unactionable lock timeout names the lock file the operator must inspect.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { setTimeout as nativeSleep } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
 import { acquireGatewayLock, resolveGatewayLockPaths } from "./gateway-lock.js";
@@ -9,6 +8,21 @@ import { acquireGatewayLock, resolveGatewayLockPaths } from "./gateway-lock.js";
 const fixtureRootTracker = createSuiteTempRootTracker({
   prefix: "openclaw-gateway-lock-unactionable-",
 });
+
+/**
+ * Deterministic deadline control: `now` and `sleep` are the pair acquireGatewayLock
+ * already takes, so the poll loop advances virtual time instead of waiting. It starts
+ * from the real clock so staleness checks against real lock files stay meaningful.
+ */
+function createDeadlineClock() {
+  let currentMs = Date.now();
+  return {
+    now: () => currentMs,
+    sleep: async (ms: number) => {
+      currentMs += ms;
+    },
+  };
+}
 
 // A live PID whose identity the inspector cannot confirm: `/proc` reads fail
 // when the reader runs outside the container that wrote the lock, so the owner
@@ -51,6 +65,7 @@ describe("Gateway lock timeout diagnostics", () => {
     });
     expect(holder).not.toBeNull();
 
+    const clock = createDeadlineClock();
     try {
       // withLegacyMigrationStateLock budgets: 250 ms to win, poll every 25 ms.
       const attempt = acquireGatewayLock({
@@ -61,7 +76,8 @@ describe("Gateway lock timeout diagnostics", () => {
         timeoutMs: 250,
         pollIntervalMs: 25,
         staleMs: 10 * 60_000,
-        sleep: nativeSleep,
+        now: clock.now,
+        sleep: clock.sleep,
         ...unverifiableOwner,
       });
       await expect(attempt).rejects.toThrow(stateLockPath);
@@ -88,6 +104,7 @@ describe("Gateway lock timeout diagnostics", () => {
       "utf8",
     );
 
+    const clock = createDeadlineClock();
     const attempt = acquireGatewayLock({
       allowInTests: true,
       env,
@@ -96,7 +113,8 @@ describe("Gateway lock timeout diagnostics", () => {
       timeoutMs: 250,
       pollIntervalMs: 25,
       staleMs: 10 * 60_000,
-      sleep: nativeSleep,
+      now: clock.now,
+      sleep: clock.sleep,
       ...unverifiableOwner,
     });
     await expect(attempt).rejects.toThrow(configLockPath);

@@ -488,6 +488,10 @@ export async function acquireGatewayLock(
         now,
         sleep: opts.sleep,
         acquire: async () => {
+          // Each poll attempt reports its own contention. Keeping the previous
+          // attempt's path would name the wrong file when a config lock blocks one
+          // attempt and a state database owner blocks the next.
+          contendedLockPath = undefined;
           let owner: ReturnType<typeof acquireGatewayStateOwner> | undefined;
           try {
             owner = acquireGatewayStateOwner({
@@ -507,8 +511,8 @@ export async function acquireGatewayLock(
             return owner;
           } catch (error) {
             // The state lock is the maintenance owner projection, so a busy
-            // state database is this file's contention. Keep the lock-file scan
-            // result when it already named a more specific file.
+            // state database is this file's contention. A lock-file scan in this
+            // same attempt already named a more specific file; keep it.
             if (error instanceof GatewayStateOwnerContentionError) {
               contendedLockPath ??= paths.stateLockPath;
             }
