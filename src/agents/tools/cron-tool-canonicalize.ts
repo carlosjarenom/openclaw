@@ -286,11 +286,28 @@ function repairPaddedCronKeys(value: Record<string, unknown>): void {
 }
 
 /**
+ * Removes the quote characters models emit around a dotted property name, so
+ * `"job.payload.message"` splits into the same segments as the bare form. Only
+ * a matched pair is stripped; a lone quote stays and the key is then ignored
+ * rather than silently repaired.
+ */
+function stripCronKeyQuotes(segment: string): string {
+  if (segment.length >= 2) {
+    const first = segment[0];
+    if ((first === '"' || first === "'") && segment.endsWith(first)) {
+      return segment.slice(1, -1);
+    }
+  }
+  return segment;
+}
+
+/**
  * Nests a literal dotted cron key ("job.payload.message") into
  * { payload: { message } } so the gateway sees the nested shape the tool schema
  * documents. Returns:
- * - "nested": the path was free and now holds the recovered value.
- * - "conflict": some segment along the path is already occupied. Mirrors
+ * - "nested": the path was free, or descended through compatible object
+ *   parents, and now holds the recovered value.
+ * - "conflict": an occupied leaf or a non-object parent blocks the path. Mirrors
  *   repairPaddedCronKeys: the ambiguity is never resolved here, so the caller
  *   keeps the literal key and strict gateway validation rejects the input.
  * - "ignored": not a recoverable path (unrecognized root, empty or unsafe
@@ -300,8 +317,14 @@ function nestDottedCronKey(
   value: Record<string, unknown>,
   key: string,
   entry: unknown,
-): "nested" | "conflict" | "ignored" {
-  const segments = key.split(".").map((segment) => segment.trim());
+  canonicalRoots: ReadonlySet<string>,
+): "nested" | "conflict" | "shadowed" | "ignored" {
+  // The quoted wrapper spans the whole property name, so it is removed before
+  // splitting: `"job.payload.message"` must yield the same segments as the
+  // bare form rather than a `"job` first segment.
+  const segments = stripCronKeyQuotes(key.trim())
+    .split(".")
+    .map((segment) => segment.trim());
   // "job." is the tool-schema wrapper the model is addressing; the recovered
   // value is already that job object, so the leading segment is dropped.
   if (segments[0] === "job") {
@@ -316,12 +339,31 @@ function nestDottedCronKey(
   }
   let cursor = value;
   for (const [index, segment] of segments.entries()) {
-    // `in` also covers inherited members, which keeps a dotted path from ever
-    // overwriting something already present on the target object.
+    const last = index === segments.length - 1;
+    // A dotted path that meets an object parent continues into it, so sibling
+    // fields of one recovered object ("job.payload.kind" then
+    // "job.payload.message") land in the same nested object. Only an occupied
+    // leaf or a non-object parent is a real conflict.
     if (segment in cursor) {
-      return "conflict";
+      if (last) {
+        return "conflict";
+      }
+      const child = cursor[segment];
+      if (!isRecord(child)) {
+        return "conflict";
+      }
+      // An explicit canonical value the model sent alongside the dotted key
+      // stays authoritative. Forwarding the literal property as well would
+      // make the whole update fail a strict gateway patch, so the extra dotted
+      // key is dropped instead. Objects this pass created are not canonical,
+      // so sibling dotted fields still merge into them.
+      if (canonicalRoots.has(root)) {
+        return "shadowed";
+      }
+      cursor = child;
+      continue;
     }
-    if (index === segments.length - 1) {
+    if (last) {
       cursor[segment] = entry;
       return "nested";
     }
@@ -400,12 +442,17 @@ export function recoverCronObjectFromFlatParams(params: Record<string, unknown>)
   }
   // Dotted keys run as a second pass so a canonical sibling always wins,
   // whatever the key order the model happened to emit.
+  const canonicalRoots = new Set(Object.keys(value));
   for (const key of Object.keys(params)) {
     if (CRON_RECOVERABLE_OBJECT_KEYS.has(key) || params[key] === undefined) {
       continue;
     }
-    const outcome = nestDottedCronKey(value, key, params[key]);
+    const outcome = nestDottedCronKey(value, key, params[key], canonicalRoots);
     if (outcome === "nested") {
+      found = true;
+    } else if (outcome === "shadowed") {
+      // The explicit canonical value stands; the dotted key is dropped rather
+      // than forwarded, so a working update is not broken by an extra key.
       found = true;
     } else if (outcome === "conflict") {
       // Ambiguous input: preserve the literal key so strict gateway validation
