@@ -21,6 +21,9 @@ const { createCodexSettledFinalizerTestFixture, registerCodexEventProjectorTestL
 
 registerCodexEventProjectorTestLifecycle();
 
+const SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT =
+  "The tool run finished, but no final summary was produced. I did not repeat any completed actions.";
+
 describe("registered Codex finalizer host silence contract", () => {
   let admission: ReturnType<typeof prepareSystemAgentRunAdmission>;
   let admittedRunContext: AdmittedRunContext;
@@ -103,14 +106,43 @@ describe("registered Codex finalizer host silence contract", () => {
     expect(fixture.mirror).not.toHaveBeenCalled();
   });
 
+  // This suite runs on a heartbeat trigger, which is unattended like cron: a run
+  // that only has the host placeholder left has nobody waiting to read it. The one
+  // exception is an explicitly required reply — that path keeps the visible
+  // placeholder instead of emitting NO_REPLY and dropping a reply the caller asked
+  // for. So the expectation decides, not the text.
   it.each([
-    { text: "no_reply", expectation: "optional", authored: true },
-    { text: "NO_REPLY", expectation: "required", authored: false },
-    { text: " ", expectation: "optional", authored: false },
-    { text: " ", expectation: "required", authored: false },
+    {
+      text: "no_reply",
+      expectation: "optional",
+      outcome: "answered",
+      placeholder: false,
+      finalText: "no_reply",
+    },
+    {
+      text: "NO_REPLY",
+      expectation: "required",
+      outcome: "completed-empty",
+      placeholder: true,
+      finalText: SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT,
+    },
+    {
+      text: " ",
+      expectation: "optional",
+      outcome: "silent-fallback",
+      placeholder: false,
+      finalText: SILENT_REPLY_TOKEN,
+    },
+    {
+      text: " ",
+      expectation: "required",
+      outcome: "completed-empty",
+      placeholder: true,
+      finalText: SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT,
+    },
   ] as const)(
     "distinguishes $expectation $text output",
-    async ({ text, expectation, authored }) => {
+    async ({ text, expectation, outcome, placeholder, finalText }) => {
       const input = await createInput();
       input.terminalBase.runParams.terminalReplyExpectation = expectation;
       input.terminalBase.runParams.allowEmptyAssistantReplyAsSilent = true;
@@ -118,12 +150,14 @@ describe("registered Codex finalizer host silence contract", () => {
 
       const result = await prepareTerminalWithSettledTurnFinalization(input);
 
-      // This suite runs on a heartbeat trigger, so an exhausted finalizer never
-      // materializes the visible host placeholder, required reply or not.
-      expect(fixture.runBounded).toHaveBeenCalledTimes(authored ? 1 : 2);
-      expect(result.finalizationOutcome).toBe(authored ? "answered" : "silent-fallback");
-      expect(result.attempt.assistantTexts).toEqual([authored ? text : SILENT_REPLY_TOKEN]);
-      expect(result.prepared.payloadsWithToolMedia ?? []).toEqual([]);
+      expect(fixture.runBounded).toHaveBeenCalledTimes(outcome === "answered" ? 1 : 2);
+      expect(result.finalizationOutcome).toBe(outcome);
+      expect(result.attempt.assistantTexts).toEqual([finalText]);
+      expect(result.prepared.payloadsWithToolMedia ?? []).toEqual(
+        placeholder
+          ? [expect.objectContaining({ text: SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT })]
+          : [],
+      );
       expect(fixture.mirror).not.toHaveBeenCalled();
     },
   );
