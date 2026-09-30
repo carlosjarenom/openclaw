@@ -540,9 +540,11 @@ export async function acquireGatewayLock(
       waited && role === "gateway"
         ? `; waited ${Math.round(now() - startedAt)}ms for Gateway state ownership`
         : "";
-    const message = `failed to acquire gateway state ownership${waitHint}${
-      contendedLockPath ? ` at ${contendedLockPath}` : ""
-    }`;
+    // Name a lock file even when the failure was not a contention this loop could
+    // attribute to one. The state lock is where ownership lives, so it stays the
+    // right file to point at when no attempt narrowed the cause down further.
+    const lockPath = contendedLockPath ?? paths.stateLockPath;
+    const message = `failed to acquire gateway state ownership${waitHint} at ${lockPath}`;
     const detail =
       error instanceof GatewayStateOwnerContentionError
         ? `${message}: ${error.message}. Stop the Gateway or wait for the current OpenClaw operation to finish, then retry.`

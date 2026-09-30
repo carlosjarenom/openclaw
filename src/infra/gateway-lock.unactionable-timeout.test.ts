@@ -119,4 +119,30 @@ describe("Gateway lock timeout diagnostics", () => {
     });
     await expect(attempt).rejects.toThrow(configLockPath);
   });
+
+  it("names the state lock file when the failure never reached contention", async () => {
+    // A failure that is not a GatewayStateOwnerContentionError never gets a lock
+    // file attributed to it by the retry loop, so the message used to end at
+    // "failed to acquire gateway state ownership" with nothing for the operator
+    // to go and look at. Ownership lives in the state lock, so name that.
+    const { env, lockDir, stateLockPath } = await makeCase();
+    await fs.mkdir(lockDir, { recursive: true });
+    // A directory where the lock file belongs: the write fails with EISDIR, which
+    // is not a contention error, so the loop cannot name a path itself.
+    await fs.mkdir(stateLockPath, { recursive: true });
+
+    const clock = createDeadlineClock();
+    const attempt = acquireGatewayLock({
+      allowInTests: true,
+      env,
+      lockDir,
+      role: "sqlite-maintenance",
+      timeoutMs: 250,
+      pollIntervalMs: 25,
+      staleMs: 10 * 60_000,
+      now: clock.now,
+      sleep: clock.sleep,
+    });
+    await expect(attempt).rejects.toThrow(stateLockPath);
+  });
 });

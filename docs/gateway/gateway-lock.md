@@ -40,6 +40,8 @@ During startup or restart, the Gateway waits up to five minutes for another Open
   GatewayLockError("failed to acquire gateway state ownership; waited <ms>ms for Gateway state ownership at <lockPath>")
   ```
 
+  `<lockPath>` is the lock file that blocked the last attempt. When no attempt could attribute the failure to a specific file, it is the state lock, because that is where ownership lives. Failures that are not contention — an unwritable lock directory, for example — still name it.
+
 ### Socket bind
 
 - On `EADDRINUSE`, startup retries the bind for up to 20 attempts at 500ms intervals (roughly 10 seconds total) to ride out a `TIME_WAIT` window after a recently exited process.
