@@ -897,7 +897,15 @@ export async function runCronJob(state: CronState, jobId: string, mode: "force" 
       ? state.cronEditingJob
       : (state.cronJobs.find((candidate) => candidate.id === jobId) ?? { id: jobId, name: jobId });
   await withCronBusy(state, job, "run", async (client, reportFeedback) => {
-    const result = await client.request<CronRunResult>("cron.run", { id: jobId, mode });
+    let result: CronRunResult;
+    try {
+      result = await client.request<CronRunResult>("cron.run", { id: jobId, mode });
+    } finally {
+      // The run request has settled, so stop announcing "Starting…" even while
+      // the history refresh below still holds the mutation lock. Otherwise a
+      // slow cron.runs read leaves Run claiming the run has not begun.
+      state.cronPendingAction = null;
+    }
     if (!result.ok || ("ran" in result && !result.ran)) {
       reportFeedback(cronRunNotStartedMessage(result));
       // Invalid persisted specs create a skipped history entry with diagnostics;
