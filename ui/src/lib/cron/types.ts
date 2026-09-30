@@ -99,6 +99,9 @@ export type CronJobsLastStatusFilter = "all" | CronRunStatus | "unknown";
 export type CronJobsState<Row = CronJob> = {
   // Read admission belongs to the page; accepted mutation chains remain independent.
   canRefresh?: () => boolean;
+  // Publishing a mutation's own settle belongs to the page too: a chain that keeps
+  // the lock for a slow follow-up read still has to repaint once its request lands.
+  onMutationSettled?: () => void;
   client: GatewayBrowserClient | null;
   connected: boolean;
   cronLoading: boolean;

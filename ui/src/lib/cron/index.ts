@@ -905,6 +905,10 @@ export async function runCronJob(state: CronState, jobId: string, mode: "force" 
       // the history refresh below still holds the mutation lock. Otherwise a
       // slow cron.runs read leaves Run claiming the run has not begun.
       state.cronPendingAction = null;
+      // The enclosing chain only repaints when every step finishes, which for a
+      // run is after the history refresh. Publish this settle so the idle label
+      // lands with the request instead of trailing it.
+      state.onMutationSettled?.();
     }
     if (!result.ok || ("ran" in result && !result.ran)) {
       reportFeedback(cronRunNotStartedMessage(result));

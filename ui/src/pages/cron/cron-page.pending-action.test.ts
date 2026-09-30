@@ -68,6 +68,56 @@ describe("CronPage pending action labels", () => {
     };
   }
 
+  it("shows the idle Run now label while the run history refresh is still pending", async () => {
+    // cron.run settles before the history read it triggers. The mutation lock stays
+    // held across that read, so the pending-action label has to be published on the
+    // request's own settle — waiting for the whole chain leaves Run claiming
+    // "Starting…" for as long as cron.runs takes.
+    const job = createCronViewJob("job-1", { name: "Nightly digest" });
+    const run = createDeferred<unknown>();
+    const runs = createDeferred<unknown>();
+    const fallback = createRequest();
+    const request = vi.fn(async (requestMethod: string) => {
+      if (requestMethod === "cron.list") {
+        return cronListResponse([job]);
+      }
+      if (requestMethod === "cron.run") {
+        return run.promise;
+      }
+      if (requestMethod === "cron.runs") {
+        return runs.promise;
+      }
+      return fallback(requestMethod);
+    });
+    const gateway = createGateway({ request } as unknown as GatewayBrowserClient, true);
+    gateway.emitSnapshot({ hello: operatorHello(["operator.admin"]) });
+    const page = createPage(createContext(gateway), { render: true });
+    try {
+      await selectJob(page);
+      (page.querySelector('[data-test-id="cron-run-now"]') as HTMLButtonElement).click();
+      await waitForPending(page);
+      expect(labels(page).runNow).toContain("Starting");
+
+      run.resolve({ ok: true, ran: true });
+      // Settle the run, then assert without ever resolving the history read: the
+      // idle label is the only thing that can satisfy this.
+      await waitForCronPage(() => expect(page.cron.cronPendingAction).toBeNull());
+      await page.updateComplete;
+      const settled = labels(page);
+      expect(settled.runNow).toContain("Run now");
+      expect(settled.runNow).not.toContain("Starting");
+      // The lock is genuinely still held by the pending read, so the button stays
+      // disabled — this is a relabel, not an early unlock.
+      expect(page.cron.cronBusy).toBe(true);
+      expect(settled.runNowDisabled).toBe(true);
+    } finally {
+      run.resolve({ ok: true, ran: true });
+      runs.resolve({ entries: [], total: 0, offset: 0, hasMore: false });
+      await page.updateComplete;
+      page.remove();
+    }
+  });
+
   it("announces a run without relabelling an untouched save", async () => {
     const { page, reply } = createPendingPage("cron.run");
     try {

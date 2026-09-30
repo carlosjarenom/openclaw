@@ -201,6 +201,7 @@ class CronPage extends OpenClawLightDomElement {
       connected,
     });
     cron.canRefresh = () => this.canRefreshCron(cron);
+    cron.onMutationSettled = () => this.requestCronUpdate(cron);
     this.cron = cron;
     const routeData = resolveCronRouteData(this.routeSearch);
     cron.cronSessionFilter = routeData.session;
