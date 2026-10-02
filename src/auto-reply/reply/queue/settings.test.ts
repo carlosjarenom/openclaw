@@ -2,9 +2,20 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { resolveQueueSettingsCore } from "./settings.js";
+import type { QueueSettings, ResolveQueueSettingsParams } from "./types.js";
+
+// The table is annotated instead of `as const` so every row shares one fixture type.
+// Per-row literal types get unioned, and TypeScript fills in the keys a row omits as
+// `?: undefined`, which no longer matches the open-ended channel-id index signature on
+// `messages.queue.byChannel`.
+type BatchingDefaultsCase = {
+  name: string;
+  params: ResolveQueueSettingsParams;
+  mode: QueueSettings["mode"];
+};
 
 describe("resolveQueueSettingsCore", () => {
-  it.each([
+  it.each<BatchingDefaultsCase>([
     { name: "inbound defaults", params: { cfg: {} }, mode: "steer" },
     {
       name: "global collect",
@@ -32,7 +43,7 @@ describe("resolveQueueSettingsCore", () => {
       },
       mode: "collect",
     },
-  ] as const)("resolves $name with the built-in batching defaults", ({ params, mode }) => {
+  ])("resolves $name with the built-in batching defaults", ({ params, mode }) => {
     expect(resolveQueueSettingsCore(params)).toEqual({
       mode,
       debounceMs: 500,
