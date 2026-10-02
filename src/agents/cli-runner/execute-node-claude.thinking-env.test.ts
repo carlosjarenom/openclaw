@@ -140,11 +140,15 @@ describe("paired-node thinking env forwarding", () => {
 
     // A paired node that predates the thinking keys rejects any request naming
     // one as INVALID_REQUEST, so a run that resolved no thinking value must keep
-    // the prior request shape instead of clearing keys it never set.
+    // the prior request shape instead of clearing keys it never set. With nothing
+    // forwardable the request omits `env` and `clearEnv` entirely, so read them as
+    // empty rather than asserting on absent arguments.
     const invocation = nodeInvocation(invokeNode);
-    expect(invocation.env).not.toHaveProperty("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING");
-    expect(invocation.env).not.toHaveProperty("MAX_THINKING_TOKENS");
-    expect(invocation.clearEnv).not.toContain("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING");
-    expect(invocation.clearEnv).not.toContain("MAX_THINKING_TOKENS");
+    const namedEnv = invocation.env ?? {};
+    const clearedEnv = invocation.clearEnv ?? [];
+    expect(namedEnv).not.toHaveProperty("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING");
+    expect(namedEnv).not.toHaveProperty("MAX_THINKING_TOKENS");
+    expect(clearedEnv).not.toContain("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING");
+    expect(clearedEnv).not.toContain("MAX_THINKING_TOKENS");
   });
 });
