@@ -495,17 +495,6 @@ describe("prepareTerminalWithSettledTurnFinalization", () => {
       silent: true,
     },
     {
-      // A heartbeat whose reply the host explicitly required must stay visible:
-      // exhausting finalization cannot downgrade it to authored silence.
-      name: "mandatory reply",
-      text: SILENT_REPLY_TOKEN,
-      optional: false,
-      allowed: true,
-      failedTool: false,
-      silent: false,
-      visible: true,
-    },
-    {
       name: "optional authored silence with empty replies disabled",
       text: SILENT_REPLY_TOKEN,
       optional: true,
@@ -522,8 +511,6 @@ describe("prepareTerminalWithSettledTurnFinalization", () => {
       silent: true,
     },
     {
-      // An unattended heartbeat is not authored silence, yet it must not
-      // materialize the host placeholder either.
       name: "blank output",
       text: "",
       optional: true,
@@ -541,7 +528,7 @@ describe("prepareTerminalWithSettledTurnFinalization", () => {
     },
   ])(
     "honors the finalization silence contract: $name",
-    async ({ text, optional, allowed, failedTool, silent, visible }) => {
+    async ({ text, optional, allowed, failedTool, silent }) => {
       const attempt = failedTool ? settledFailedAttempt() : createSettledProviderFailureAttempt();
       const input = finalizationInput(attempt);
       Object.assign(input.terminalBase.runParams, {
@@ -561,12 +548,6 @@ describe("prepareTerminalWithSettledTurnFinalization", () => {
         expect(result.attempt.assistantTexts).toEqual([SILENT_REPLY_TOKEN]);
         expect(result.prepared.payloadsWithToolMedia ?? []).toEqual([]);
         expect(transcriptMocks.appendAssistantMirrorMessageByIdentity).not.toHaveBeenCalled();
-      } else if (visible) {
-        // Required replies never become silent-fallback: the outcome stays a
-        // recoverable failure carrying a visible message.
-        expect(result.finalizationOutcome).not.toBe("silent-fallback");
-        expect(result.attempt.assistantTexts).not.toEqual([SILENT_REPLY_TOKEN]);
-        expect(result.attempt.assistantTexts.join("")).not.toBe("");
       } else if (failedTool) {
         expect(result.finalizationOutcome).toBe("failed");
         expect(result.attempt).toBe(attempt);
@@ -608,15 +589,24 @@ describe("prepareTerminalWithSettledTurnFinalization", () => {
   });
 
   it.each([
-    { trigger: "user", outcome: "empty", unattended: false },
-    { trigger: "cron", outcome: "empty", unattended: true },
-    { trigger: "heartbeat", outcome: "empty", unattended: true },
-    { trigger: "user", outcome: "failed", unattended: false },
-    { trigger: "cron", outcome: "failed", unattended: true },
-    { trigger: "heartbeat", outcome: "failed", unattended: true },
+    { trigger: "user", outcome: "empty", unattended: false, label: "" },
+    { trigger: "cron", outcome: "empty", unattended: true, label: "" },
+    { trigger: "heartbeat", outcome: "empty", unattended: true, label: "" },
+    // Legacy heartbeat hosts omit terminalReplyExpectation entirely and only set the
+    // empty-reply policy, so the shared resolver is the only place the required reply
+    // survives: reading the raw field emits NO_REPLY and drops the scheduled reply.
+    {
+      trigger: "heartbeat",
+      outcome: "empty",
+      unattended: false,
+      label: " for a legacy required heartbeat",
+    },
+    { trigger: "user", outcome: "failed", unattended: false, label: "" },
+    { trigger: "cron", outcome: "failed", unattended: true, label: "" },
+    { trigger: "heartbeat", outcome: "failed", unattended: true, label: "" },
   ] as const)(
-    "persists and delivers a $trigger fallback after $outcome finalization",
-    async ({ trigger, outcome, unattended }) => {
+    "persists and delivers a $trigger fallback after $outcome finalization$label",
+    async ({ trigger, outcome, unattended, label }) => {
       const expectedText = unattended
         ? SILENT_REPLY_TOKEN
         : SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT;
@@ -640,6 +630,10 @@ describe("prepareTerminalWithSettledTurnFinalization", () => {
       // the placeholder is noise. A user turn is a required reply and must not
       // be waived by an exhausted finalizer.
       input.terminalBase.runParams.terminalReplyExpectation = unattended ? "optional" : "required";
+      if (label) {
+        delete input.terminalBase.runParams.terminalReplyExpectation;
+        input.terminalBase.runParams.allowEmptyAssistantReplyAsSilent = false;
+      }
       input.finalization.preparedAttempt.abortSignal = AbortSignal.abort(
         new Error("original attempt timed out"),
       );
