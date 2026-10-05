@@ -178,6 +178,14 @@ function readIgnoreFileContent(ignorePath: string): string | null | typeof OVERS
   }
 }
 
+// The containing directory's relative path is literal filesystem text, but it is spliced into
+// authored ignore syntax. Escape the characters `ignore` reads as pattern grammar so a directory
+// named `[drafts]`, `#drafts`, `!drafts`, `draft*`, `draft?`, or `back\slash` matches only itself
+// instead of becoming a character class, comment, negation, or glob.
+function escapeIgnorePrefix(prefix: string): string {
+  return prefix.replace(/[!#*?[\\]/g, "\\$&");
+}
+
 function prefixIgnorePattern(line: string, prefix: string): string {
   const trimmed = line.trim();
   if (!trimmed || (trimmed.startsWith("#") && !trimmed.startsWith("\\#"))) {
@@ -192,6 +200,6 @@ function prefixIgnorePattern(line: string, prefix: string): string {
   const matchPattern = normalized.replace(/ +$/, "");
   const depthGlob = prefix && !anchored && !matchPattern.slice(0, -1).includes("/") ? "**/" : "";
   // At the scan root, keep the leading slash so anchored rules stay top-level only.
-  const prefixed = prefix ? `${prefix}${depthGlob}${normalized}` : pattern;
+  const prefixed = prefix ? `${escapeIgnorePrefix(prefix)}${depthGlob}${normalized}` : pattern;
   return negated ? `!${prefixed}` : prefixed;
 }

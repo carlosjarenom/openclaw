@@ -131,6 +131,30 @@ describe("config-eval helpers", () => {
     expect(hasBinary("tool")).toBe(true);
   });
 
+  it("re-probes cached binary hits when the working directory changes", () => {
+    mockProcessPlatform("linux");
+    const binDir = tempDirs.make("openclaw-binary-cwd-identity-");
+    const firstCwd = path.join(binDir, "first");
+    const secondCwd = path.join(binDir, "second");
+    fs.mkdirSync(firstCwd, { recursive: true });
+    fs.mkdirSync(secondCwd, { recursive: true });
+    const executable = path.join(binDir, "tool");
+    fs.writeFileSync(executable, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(executable, 0o755);
+    vi.stubEnv("PATH", binDir);
+    const cwdSpy = vi.spyOn(process, "cwd");
+
+    cwdSpy.mockReturnValue(firstCwd);
+    expect(hasBinary("tool")).toBe(true);
+    // A hit stays cached while the working directory that produced it is unchanged.
+    fs.unlinkSync(executable);
+    expect(hasBinary("tool")).toBe(true);
+
+    // Relative PATH entries resolve against cwd, so cwd belongs in the cache identity.
+    cwdSpy.mockReturnValue(secondCwd);
+    expect(hasBinary("tool")).toBe(false);
+  });
+
   it.each([
     { platform: "linux", suffix: "" },
     { platform: "win32", suffix: ".CMD" },
@@ -169,6 +193,31 @@ describe("prepared binary availability", () => {
     expect(hasBinary("fixture-tool")).toBe(true);
     vi.stubEnv("PATH", path.join(binDir, "other"));
     expect(hasBinary("fixture-tool")).toBe(false);
+  });
+
+  it("does not reuse a relative PATH hit from a previous working directory", async () => {
+    mockProcessPlatform("linux");
+    const binDir = tempDirs.make("openclaw-prepared-relative-cwd-");
+    const withTool = path.join(binDir, "first");
+    const withoutTool = path.join(binDir, "second");
+    fs.mkdirSync(path.join(withTool, "bin"), { recursive: true });
+    fs.mkdirSync(withoutTool, { recursive: true });
+    const executable = path.join(withTool, "bin", "fixture-tool");
+    fs.writeFileSync(executable, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(executable, 0o755);
+    vi.stubEnv("PATH", "./bin");
+    const cwdSpy = vi.spyOn(process, "cwd");
+
+    cwdSpy.mockReturnValue(withTool);
+    expect((await prepareBinaryAvailability(["fixture-tool"])).hasBinary("fixture-tool")).toBe(
+      true,
+    );
+
+    // The same relative PATH entry resolves elsewhere, so the earlier hit does not apply.
+    cwdSpy.mockReturnValue(withoutTool);
+    const prepared = await prepareBinaryAvailability(["fixture-tool"]);
+    expect(prepared.hasBinary("fixture-tool")).toBe(false);
+    expect(prepared.isCurrent()).toBe(true);
   });
 
   it("does not publish an awaited hit into a different PATH cache", async () => {

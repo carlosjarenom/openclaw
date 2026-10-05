@@ -4,6 +4,13 @@ import { isPlainObject } from "../utils.js";
 
 type PathNode = Record<string, unknown>;
 
+// null/undefined mean "no value yet", so they still accept object creation. Anything else that is
+// not a container holds real configuration (the documented `model: "provider/id"` shorthand, for
+// example) and must not be discarded by a setter that was asked for a sub-key.
+function holdsConfiguredScalar(value: unknown): boolean {
+  return value !== undefined && value !== null && typeof value !== "object";
+}
+
 function setOwnConfigProperty(node: PathNode, key: string, value: unknown): void {
   if (Object.hasOwn(node, key)) {
     node[key] = value;
@@ -44,8 +51,15 @@ export function setConfigValueAtPath(root: PathNode, path: string[], value: unkn
     throw new Error("Config path must contain at least one segment");
   }
   let cursor: PathNode = root;
-  for (const key of path.slice(0, -1)) {
+  for (const [index, key] of path.slice(0, -1).entries()) {
     const existing = Object.hasOwn(cursor, key) ? cursor[key] : undefined;
+    // Writing `agents.defaults.model.fallbacks` under a string model must not silently drop the
+    // configured primary; refuse instead so the caller reports it before the file is touched.
+    if (holdsConfiguredScalar(existing)) {
+      throw new Error(
+        `Cannot set "${path.slice(0, index + 2).join(".")}": "${path.slice(0, index + 1).join(".")}" is set to ${JSON.stringify(existing)}, not an object. Replace it first to set a sub-value.`,
+      );
+    }
     const next: PathNode = isPlainObject(existing) ? existing : {};
     if (next !== existing) {
       setOwnConfigProperty(cursor, key, next);

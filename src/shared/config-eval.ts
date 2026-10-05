@@ -134,14 +134,17 @@ function windowsPathExtensions(raw: string | undefined): string[] {
 const pendingBinaryAccess = new Map<string, Promise<void>>();
 
 // Installs can create binaries under unchanged PATH/PATHEXT, so cache only successful probes.
-let binaryCache: { path: string; pathExt: string; hits: Set<string> } | undefined;
+let binaryCache: { path: string; pathExt: string; cwd: string; hits: Set<string> } | undefined;
 
 function resolveBinaryCache() {
   const isWindows = process.platform === "win32";
   const pathEnv = process.env.PATH ?? "";
   const pathExt = isWindows ? (process.env.PATHEXT ?? "") : "";
-  if (binaryCache?.path !== pathEnv || binaryCache.pathExt !== pathExt) {
-    binaryCache = { path: pathEnv, pathExt, hits: new Set() };
+  // Relative PATH entries resolve against cwd, so a hit found under one directory is not
+  // evidence for another. Key the cache on cwd alongside PATH/PATHEXT.
+  const cwd = process.cwd();
+  if (binaryCache?.path !== pathEnv || binaryCache.pathExt !== pathExt || binaryCache.cwd !== cwd) {
+    binaryCache = { path: pathEnv, pathExt, cwd, hits: new Set() };
   }
   return binaryCache;
 }

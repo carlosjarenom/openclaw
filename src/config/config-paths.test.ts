@@ -126,4 +126,31 @@ describe("config path own-property traversal", () => {
       });
     });
   }
+
+  it.each([
+    { label: "string shorthand", primary: "openai/gpt-5.4" },
+    { label: "number", primary: 42 },
+    { label: "boolean", primary: false },
+  ])("refuses to set a sub-value under a $label instead of dropping it", ({ primary }) => {
+    const root = { agents: { defaults: { model: primary } } };
+
+    expect(() =>
+      setConfigValueAtPath(
+        root,
+        ["agents", "defaults", "model", "fallbacks"],
+        ["anthropic/claude-sonnet-4-6"],
+      ),
+    ).toThrow(/agents\.defaults\.model/);
+    expect(root.agents.defaults.model).toBe(primary);
+  });
+
+  it("creates sub-values under an absent or empty parent", () => {
+    const absent = { agents: {} as Record<string, unknown> };
+    setConfigValueAtPath(absent, ["agents", "defaults", "model", "fallbacks"], ["a"]);
+    expect(absent.agents.defaults).toEqual({ model: { fallbacks: ["a"] } });
+
+    const empty = { agents: { defaults: { model: null as unknown } } };
+    setConfigValueAtPath(empty, ["agents", "defaults", "model", "fallbacks"], ["a"]);
+    expect(empty.agents.defaults.model).toEqual({ fallbacks: ["a"] });
+  });
 });

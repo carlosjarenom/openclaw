@@ -114,8 +114,16 @@ function isExecShellSnapshotDisabled(env: Record<string, string | undefined>): b
 
 async function getOrCreateShellSnapshot(opts: ShellSnapshotWrapOptions): Promise<string | null> {
   const key = buildSnapshotKey(opts);
-  const cached = snapshotCache.get(key);
   const now = Date.now();
+  // cleanupStaleSnapshots only prunes files; without this the Map keeps one entry (and its settled
+  // promise) for every distinct key a long-lived process ever builds. Mirror the same age policy so
+  // in-memory retention tracks recent keys instead of cumulative ones.
+  for (const [cachedKey, entry] of snapshotCache) {
+    if (now - entry.createdAtMs >= SNAPSHOT_MAX_AGE_MS) {
+      snapshotCache.delete(cachedKey);
+    }
+  }
+  const cached = snapshotCache.get(key);
   if (cached && now - cached.createdAtMs < SNAPSHOT_REFRESH_MS) {
     return await cached.promise;
   }

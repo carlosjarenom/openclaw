@@ -1,6 +1,6 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it } from "vitest";
-import { mergeAtPath, parseConfigSetValue } from "./config-cli-path.js";
+import { mergeAtPath, parseConfigSetValue, setAtPath } from "./config-cli-path.js";
 
 function nestedRecord(depth: number, leaf: Record<string, unknown>): Record<string, unknown> {
   let value = leaf;
@@ -62,5 +62,48 @@ describe("parseConfigSetValue", () => {
       cursor = cursor.nested;
     }
     expect(cursor).toEqual({ retained: true, added: true });
+  });
+});
+
+describe("setAtPath traversal guards", () => {
+  it.each([
+    { label: "string shorthand", primary: "openai/gpt-5.4" },
+    { label: "number", primary: 42 },
+    { label: "boolean", primary: false },
+  ])("refuses to set a sub-value under a $label instead of dropping it", ({ primary }) => {
+    const root = { agents: { defaults: { model: primary } } };
+
+    expect(() =>
+      setAtPath(
+        root,
+        ["agents", "defaults", "model", "fallbacks"],
+        ["anthropic/claude-sonnet-4-6"],
+      ),
+    ).toThrow(/agents\.defaults\.model/);
+    expect(root.agents.defaults.model).toBe(primary);
+  });
+
+  it("still replaces a scalar when the caller writes the parent path itself", () => {
+    const root = { agents: { defaults: { model: "openai/gpt-5.4" } } };
+
+    setAtPath(root, ["agents", "defaults", "model"], {
+      primary: "openai/gpt-5.4",
+      fallbacks: ["anthropic/claude-sonnet-4-6"],
+    });
+
+    expect(root.agents.defaults.model).toEqual({
+      primary: "openai/gpt-5.4",
+      fallbacks: ["anthropic/claude-sonnet-4-6"],
+    });
+  });
+
+  it("creates sub-values under an absent or empty parent", () => {
+    const absent: Record<string, unknown> = { agents: {} };
+    setAtPath(absent, ["agents", "defaults", "model", "fallbacks"], ["a"]);
+    expect(absent.agents).toEqual({ defaults: { model: { fallbacks: ["a"] } } });
+
+    const empty: Record<string, unknown> = { agents: { defaults: { model: null } } };
+    setAtPath(empty, ["agents", "defaults", "model", "fallbacks"], ["a"]);
+    expect(isRecord(empty.agents) && isRecord(empty.agents.defaults)).toBe(true);
   });
 });

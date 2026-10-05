@@ -144,6 +144,27 @@ describe("addIgnoreRules", () => {
     expect(ig.ignores("private/secret.txt")).toBe(true);
   });
 
+  it.each(["[drafts]", "#drafts", "!drafts", "draft*", "draft?", "back\\slash"])(
+    "treats %s as a literal directory prefix in nested rules",
+    (dirName) => {
+      const nestedDir = path.join(tempDir, dirName);
+      fs.mkdirSync(path.join(nestedDir, "nested"), { recursive: true });
+      fs.mkdirSync(path.join(nestedDir, "keep"), { recursive: true });
+      fs.writeFileSync(path.join(nestedDir, ".gitignore"), "SKILL.md\n!keep/SKILL.md\n", "utf-8");
+
+      const ig = addIgnoreRules(nestedDir, tempDir);
+      const prefix = dirName.split(path.sep).join("/");
+
+      expect(ig.ignores(`${prefix}/SKILL.md`)).toBe(true);
+      expect(ig.ignores(`${prefix}/nested/SKILL.md`)).toBe(true);
+      // The authored negation still reaches through the escaped prefix.
+      expect(ig.ignores(`${prefix}/keep/SKILL.md`)).toBe(false);
+      // Unrelated siblings must not match the escaped directory name.
+      expect(ig.ignores("drafts/SKILL.md")).toBe(false);
+      expect(ig.ignores("backslash/SKILL.md")).toBe(false);
+    },
+  );
+
   it("keeps fail-closed metadata when the matcher is extended", () => {
     const nestedDir = path.join(tempDir, "locked");
     fs.mkdirSync(nestedDir);

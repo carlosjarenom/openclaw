@@ -230,6 +230,22 @@ function shouldCreateArrayForMissingPathSegment(params: {
   return schemaPrefersArrayAtPath(params.options?.schema, parentPath) ?? true;
 }
 
+// null/undefined mean "no value yet", so they still accept container creation. Anything else that is
+// not a container holds real configuration (the documented `model: "provider/id"` shorthand, for
+// example) and must not be discarded by a setter that was asked for a sub-key.
+function assertTraversableConfigValue(
+  existing: unknown,
+  path: readonly PathSegment[],
+  segmentIndex: number,
+): void {
+  if (existing === undefined || existing === null || typeof existing === "object") {
+    return;
+  }
+  throw new Error(
+    `Cannot set ${toDotPath(path)}: ${toDotPath(path.slice(0, segmentIndex + 1))} is set to ${JSON.stringify(existing)}, not an object. Use --replace to overwrite it intentionally.`,
+  );
+}
+
 export function setAtPath(
   root: Record<string, unknown>,
   path: PathSegment[],
@@ -254,6 +270,7 @@ export function setAtPath(
         throw new Error(`Expected numeric index for array segment "${segment}"`);
       }
       const existing = current[index];
+      assertTraversableConfigValue(existing, path, i);
       if (!existing || typeof existing !== "object") {
         current[index] = nextIsIndex ? [] : {};
       }
@@ -265,6 +282,9 @@ export function setAtPath(
     }
     const record = current as Record<string, unknown>;
     const existing = Object.hasOwn(record, segment) ? record[segment] : undefined;
+    // Writing `agents.defaults.model.fallbacks` under a string model must not silently drop the
+    // configured primary; refuse instead so the caller reports it before the file is touched.
+    assertTraversableConfigValue(existing, path, i);
     if (!existing || typeof existing !== "object") {
       record[segment] = nextIsIndex ? [] : {};
     }
