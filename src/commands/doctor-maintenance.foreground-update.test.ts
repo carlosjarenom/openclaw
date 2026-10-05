@@ -4,10 +4,10 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { TICK_INTERVAL_MS } from "../gateway/server-constants.js";
+import { resolveGatewayLockPaths } from "../infra/gateway-lock-paths.js";
 import {
   acquireGatewayLock,
   readLockPayloadSync,
-  resolveGatewayLockPaths,
   resolveGatewayOwnerStatus,
 } from "../infra/gateway-lock.js";
 import {

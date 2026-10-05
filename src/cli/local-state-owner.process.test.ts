@@ -31,10 +31,10 @@ import {
 } from "../gateway/server-methods/sessions-mutations.owner.test-support.js";
 import { createWorktreesHandlers } from "../gateway/server-methods/worktrees.js";
 import { startWorktreeMaintenance } from "../gateway/worktree-maintenance.js";
+import { resolveGatewayLockPaths } from "../infra/gateway-lock-paths.js";
 import {
   acquireGatewayLock,
   readActiveGatewayLockIdentity,
-  resolveGatewayLockPaths,
   type GatewayLockHandle,
 } from "../infra/gateway-lock.js";
 import { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";

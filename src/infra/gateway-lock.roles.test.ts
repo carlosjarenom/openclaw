@@ -7,6 +7,7 @@ import { setTimeout as nativeSleep } from "node:timers/promises";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { awaitGateBeforeSettlement, withinTest } from "../../test/helpers/promise.js";
 import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
+import { resolveGatewayLockPaths } from "./gateway-lock-paths.js";
 import {
   acquireGatewayLock,
   GatewayLockError,

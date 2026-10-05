@@ -1,6 +1,7 @@
 /** LaunchAgent stop semantics and in-service maintenance parking. */
 import { isDeepStrictEqual } from "node:util";
-import { readLockPayloadSync, resolveGatewayLockPaths } from "../infra/gateway-lock.js";
+import { resolveGatewayLockPaths } from "../infra/gateway-lock-paths.js";
+import { readLockPayloadSync } from "../infra/gateway-lock.js";
 import { readGatewayOwnerLease } from "../infra/gateway-owner-lease.js";
 import { formatPortDiagnostics } from "../infra/ports-format.js";
 import { inspectPortUsage } from "../infra/ports-inspect.js";

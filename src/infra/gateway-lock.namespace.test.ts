@@ -7,6 +7,7 @@ import { awaitGateBeforeSettlement, createDeferred } from "../../test/helpers/pr
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { acquireDoctorGatewayMaintenanceOwner } from "../commands/doctor-maintenance-foreground.js";
 import { resolveStateDir } from "../config/paths.js";
+import { resolveGatewayLockPaths } from "./gateway-lock-paths.js";
 import {
   GATEWAY_OWNER_HEARTBEAT_STALE_MS,
   parseGatewayLockPayload,
@@ -16,7 +17,6 @@ import {
   acquireGatewayLock,
   GatewayLockError,
   readActiveGatewayLockIdentity,
-  resolveGatewayLockPaths,
   resolveGatewayOwnerStatus,
 } from "./gateway-lock.js";
 import * as bootReader from "./update-managed-service-handoff-boot.js";

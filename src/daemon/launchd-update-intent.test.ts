@@ -8,7 +8,7 @@ import { Writable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stopChildProcess } from "../../test/helpers/stop-child-process.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { resolveGatewayLockPaths } from "../infra/gateway-lock.js";
+import { resolveGatewayLockPaths } from "../infra/gateway-lock-paths.js";
 import { readGatewayOwnerLease } from "../infra/gateway-owner-lease.js";
 import { writeGatewayRestartIntentSync } from "../infra/restart-intent.js";
 import * as tempRoot from "../infra/tmp-openclaw-dir.js";

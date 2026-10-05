@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
 import * as json5 from "json5";
-import { resolveGatewayLockPaths } from "../infra/gateway-lock.js";
+import { resolveGatewayLockPaths } from "../infra/gateway-lock-paths.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { registerSealedRuntime } from "../infra/sealed-runtime-registry.js";
 import { withConsoleLogsRoutedToStderrForJson } from "./json-output-mode.js";

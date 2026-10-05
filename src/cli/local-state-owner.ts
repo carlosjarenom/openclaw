@@ -60,12 +60,13 @@ export async function runWithLocalStateOwner<T>(params: {
       isSameGatewayLockIdentity,
       readActiveGatewayLockIdentity,
       readLockPayloadSync,
-      resolveGatewayLockPaths,
     },
+    { resolveGatewayLockPaths },
     { captureGatewayStateOwner },
     { createOpenClawDatabaseMaintenanceScope },
   ] = await Promise.all([
     import("../infra/gateway-lock.js"),
+    import("../infra/gateway-lock-paths.js"),
     import("../infra/gateway-state-owner.js"),
     import("../state/openclaw-state-db-async-lifecycle.js"),
   ]);

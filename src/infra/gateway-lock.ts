@@ -8,7 +8,6 @@ import {
   resolveTimerTimeoutMs,
   resolveTimestampMsToIsoString,
 } from "@openclaw/normalization-core/number-coercion";
-import { resolveConfigPath, resolveGatewayLockDir, resolveStateDir } from "../config/paths.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { isPidAlive } from "../shared/pid-alive.js";
 import {
@@ -17,9 +16,9 @@ import {
 } from "../state/openclaw-state-db-async-lifecycle.js";
 import { acquireWithWait } from "./acquire-with-wait.js";
 import { resolveIdentityPathViaExistingAncestorSync } from "./boundary-path.js";
-import { sha256HexPrefixCore } from "./crypto-digest.js";
 import { hasErrnoCode } from "./errno.js";
 import { acquireFileLockSync } from "./file-lock-manager.js";
+import { resolveGatewayLockPaths } from "./gateway-lock-paths.js";
 import {
   classifyGatewayLockProcessNamespace,
   describeGatewayLockHolder,
@@ -46,7 +45,6 @@ import {
   createGatewayStateProjection,
   type GatewayStateProjection,
   GatewayStateOwnerContentionError,
-  resolveGatewayStateOwnerPath,
   tryBorrowGatewayStateOwner,
 } from "./gateway-state-owner.js";
 
@@ -306,21 +304,6 @@ function shouldReclaimGatewayLock(params: {
     // An unreadable lock can still belong to a healthy gateway. Fail closed.
     return false;
   }
-}
-
-export function resolveGatewayLockPaths(env: NodeJS.ProcessEnv, suppliedLockDir?: string) {
-  const resolvedStateDir = resolveStateDir(env);
-  const stateDir = resolveIdentityPathViaExistingAncestorSync(resolvedStateDir);
-  const lockDir = suppliedLockDir ?? resolveGatewayLockDir(stateDir);
-  const configPath = resolveConfigPath(env, resolvedStateDir);
-  const configHash = sha256HexPrefixCore(configPath, 8);
-  return {
-    configLockPath: path.join(lockDir, `gateway.${configHash}.lock`),
-    configPath,
-    stateDir,
-    stateLockPath: path.join(lockDir, "gateway.state.lock"),
-    ownerLockPath: resolveGatewayStateOwnerPath(path.join(stateDir, "state", "openclaw.sqlite")),
-  };
 }
 
 type GatewayLockObservationOptions = Pick<

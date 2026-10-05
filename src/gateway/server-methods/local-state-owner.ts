@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 import path from "node:path";
-import { resolveGatewayLockPaths } from "../../infra/gateway-lock.js";
+import { resolveGatewayLockPaths } from "../../infra/gateway-lock-paths.js";
 import { captureGatewayStateOwner } from "../../infra/gateway-state-owner.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 

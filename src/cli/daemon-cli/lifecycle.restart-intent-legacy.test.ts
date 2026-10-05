@@ -5,7 +5,7 @@ import { hostname } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { resolveGatewayLockPaths } from "../../infra/gateway-lock.js";
+import { resolveGatewayLockPaths } from "../../infra/gateway-lock-paths.js";
 import { resolveOpenClawPackageRoot } from "../../infra/openclaw-root.js";
 import { getFileLockProcessStartTime } from "../../shared/pid-alive.js";
 import * as existingWrites from "../../state/openclaw-state-db-existing-write.js";

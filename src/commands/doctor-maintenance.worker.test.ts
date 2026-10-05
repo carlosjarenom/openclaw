@@ -9,7 +9,7 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { loadCronStore, resolveCronJobsStorePathFromConfig } from "../cron/store.js";
 import { acquireFileLock } from "../infra/file-lock.js";
-import * as gatewayLock from "../infra/gateway-lock.js";
+import { resolveGatewayLockPaths } from "../infra/gateway-lock-paths.js";
 import {
   autoMigrateLegacyStateDir,
   resetAutoMigrateLegacyStateDirForTest,
@@ -39,7 +39,7 @@ function relayRecord(revision: number): NativeHookRelayBridgeRecord {
 }
 
 function claimHistoricalProjection(stateDir: string) {
-  const { stateLockPath } = gatewayLock.resolveGatewayLockPaths({
+  const { stateLockPath } = resolveGatewayLockPaths({
     ...process.env,
     OPENCLAW_STATE_DIR: stateDir,
   });

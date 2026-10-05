@@ -61,7 +61,7 @@ try {
   } else {
     const [{ requireNodeSqlite }, { resolveGatewayLockPaths }] = await Promise.all([
       import("../infra/node-sqlite.js"),
-      import("../infra/gateway-lock.js"),
+      import("../infra/gateway-lock-paths.js"),
     ]);
     const native = requireNodeSqlite();
     const ownerPath = resolveGatewayLockPaths(process.env).ownerLockPath;

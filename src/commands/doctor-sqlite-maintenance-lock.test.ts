@@ -4,16 +4,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { resolveGatewayLockPaths } from "../infra/gateway-lock-paths.js";
 import {
   GATEWAY_OWNER_HEARTBEAT_STALE_MS,
   readGatewayLockProcessNamespace,
   type LockPayload,
 } from "../infra/gateway-lock-payload.js";
-import {
-  acquireGatewayLock,
-  GatewayLockError,
-  resolveGatewayLockPaths,
-} from "../infra/gateway-lock.js";
+import { acquireGatewayLock, GatewayLockError } from "../infra/gateway-lock.js";
 import * as gatewayLockModule from "../infra/gateway-lock.js";
 import { assertStateDatabaseAccessAllowed } from "../infra/gateway-state-owner.js";
 import { prepareGithubIssue } from "../infra/github-issue.js";
