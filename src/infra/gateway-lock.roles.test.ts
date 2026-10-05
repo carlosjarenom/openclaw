@@ -16,6 +16,13 @@ import {
 } from "./gateway-lock.js";
 import { acquireGatewayStateOwner } from "./gateway-state-owner.js";
 
+async function pathExists(target: string): Promise<boolean> {
+  return fs
+    .access(target)
+    .then(() => true)
+    .catch(() => false);
+}
+
 const lifecycleChildren = new Map<ChildProcess, Promise<unknown[]>>();
 const lifecycleDatabases = new Set<string>();
 const fixtureRootTracker = createSuiteTempRootTracker({
@@ -58,6 +65,10 @@ async function holdLifecycleCoordinator(signal: AbortSignal) {
   return {
     child,
     options: { env, allowInTests: true, lockDir: path.join(stateDir, "__locks") },
+    // The child holds the process owner sidecar directly, so this fixture never
+    // publishes the compatibility projection an acquired Gateway lock writes.
+    ownerLockPath: coordinator.path,
+    stateLockPath: resolveGatewayLockPaths(env, path.join(stateDir, "__locks")).stateLockPath,
   };
 }
 
@@ -98,15 +109,29 @@ describe("Gateway lock roles", () => {
     await lock?.release();
   });
 
-  it("bounds a live owner's wait at five minutes and names state ownership", async ({ signal }) => {
-    const { options } = await holdLifecycleCoordinator(signal);
+  it("bounds a live owner's wait at five minutes and names the sidecar that blocked", async ({
+    signal,
+  }) => {
+    const { options, ownerLockPath, stateLockPath } = await holdLifecycleCoordinator(signal);
+    // A second process holds the real sidecar, so the operator is pointed at a file
+    // that exists. The projection never does in this lifecycle.
+    expect(await pathExists(ownerLockPath)).toBe(true);
+    expect(await pathExists(stateLockPath)).toBe(false);
     let elapsedMs = 0;
     const sleep = vi.fn(async (ms: number) => {
       elapsedMs += ms;
     });
-    await expect(acquireGatewayLock({ ...options, now: () => elapsedMs, sleep })).rejects.toThrow(
-      "failed to acquire gateway state ownership; waited 300000ms for Gateway state ownership",
+    const failure = await acquireGatewayLock({ ...options, now: () => elapsedMs, sleep }).then(
+      () => undefined,
+      (error: unknown) => error,
     );
+    expect(failure).toBeInstanceOf(GatewayLockError);
+    expect((failure as Error).message).toContain(
+      `failed to acquire gateway state ownership; waited 300000ms for Gateway state ownership at ${ownerLockPath}`,
+    );
+    // Nothing published the projection in this lifecycle, so naming it would send
+    // the operator after a file that never blocked anything.
+    expect((failure as Error).message).not.toContain(stateLockPath);
     expect(elapsedMs).toBe(300_000);
     expect(sleep).toHaveBeenCalled();
   });
